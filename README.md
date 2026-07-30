@@ -22,6 +22,11 @@ Discordのボイスチャンネルへ参加し、OpenAI Realtime APIを使って
 > [!IMPORTANT]
 > 初回実装は基盤フェーズです。Discord/OpenAIの実資格情報を用いたEnd-to-End音声疎通は、利用者のローカル環境で実施してください。API課金が発生するためCIでは実行しません。
 
+> [!WARNING]
+> 現時点の`BOT_WAKE_WORD`は会話Instructionsへ渡されるだけで、入力音声の前段フィルターではありません。VC内で最初に話したユーザーの音声がRealtime APIへ送信されます。テストは専用VCで行ってください。
+
+Windowsで初回テストを行う場合は、[WindowsローカルE2E音声テスト手順書](docs/windows-local-e2e-runbook.md)を上から順番に実施してください。
+
 ## 構成
 
 ```text
@@ -154,6 +159,8 @@ RooMate Voiceは、実在人物や既存キャラクターの無許諾な音声�
 
 ## ドキュメント
 
+- [WindowsローカルE2E音声テスト手順書](docs/windows-local-e2e-runbook.md)
+- [E2Eテスト結果テンプレート](docs/e2e-test-record-template.md)
 - [アーキテクチャ](docs/architecture.md)
 - [ローカル開発](docs/local-development.md)
 - [AWS Lightsailへの配置](docs/lightsail-deployment.md)
