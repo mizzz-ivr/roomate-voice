@@ -16,9 +16,10 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "build": "npm run clean && npm run build:main && npm run build:renderer",
+    "stage:worker": "node scripts/stage-worker.mjs",
     "start": "electron .",
-    "pack": "npm run build && electron-builder --dir",
-    "make:win": "npm run build && electron-builder --win nsis --x64"
+    "pack": "npm run build && npm run stage:worker && electron-builder --dir",
+    "make:win": "npm run build && npm run stage:worker && electron-builder --win nsis --x64"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -43,6 +44,15 @@
     "files": [
       "dist/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "worker-stage",
+        "to": "worker",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "win": {
       "target": [
