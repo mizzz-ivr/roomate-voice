@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +8,7 @@ import type { DesktopSettingsStore } from './settings-store.js';
 const HEALTH_URL = 'http://127.0.0.1:3001/health';
 
 export class BotRuntimeController {
-  private child: ChildProcessWithoutNullStreams | undefined;
+  private child: ChildProcess | undefined;
   private state: BotRuntimeSnapshot['state'] = 'stopped';
   private lastError: string | undefined;
   private health: BotHealthSnapshot | undefined;
@@ -66,11 +66,11 @@ export class BotRuntimeController {
       });
       this.child = child;
 
-      child.stdout.on('data', () => {
+      child.stdout?.on('data', () => {
         // Bot stdout is intentionally not forwarded to the renderer. Diagnostics will expose only
         // sanitized metadata in a later phase.
       });
-      child.stderr.on('data', (chunk: Buffer) => {
+      child.stderr?.on('data', (chunk: Buffer) => {
         const message = this.redact(chunk.toString()).trim();
         if (message) this.lastError = message.slice(-2_000);
       });
