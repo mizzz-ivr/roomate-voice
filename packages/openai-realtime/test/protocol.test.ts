@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createAppendAudio,
+  createCommitAudio,
   createDeleteConversationItem,
   createSessionUpdate,
 } from '../src/index.js';
@@ -39,6 +40,13 @@ describe('realtime protocol', () => {
   it('encodes PCM bytes as base64', () => {
     const event = createAppendAudio(Buffer.from([1, 2, 3]));
     expect(event.audio).toBe('AQID');
+  });
+
+  it('adds a client event id to input audio commits when supplied', () => {
+    expect(createCommitAudio('roomate_commit_test')).toEqual({
+      type: 'input_audio_buffer.commit',
+      event_id: 'roomate_commit_test',
+    });
   });
 
   it('creates a conversation item delete event', () => {
