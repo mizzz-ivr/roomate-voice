@@ -5,7 +5,7 @@ import path from 'node:path';
 import electronPath from 'electron';
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const mainEntry = path.join(appRoot, 'dist', 'main', 'main.js');
+const mainEntry = path.join(appRoot, 'dist', 'main', 'main', 'main.js');
 const rendererUrl = 'http://127.0.0.1:5174';
 
 async function rendererReady() {
