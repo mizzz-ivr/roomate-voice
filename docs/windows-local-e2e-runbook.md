@@ -18,6 +18,8 @@ Windows PC上でRooMate Voiceを起動し、Discord VC + OpenAI Realtime APIの�
 - pending Transcriptionのitem ID相関とWake/delete/response判定はcommit順で処理する
 - 新しいaudio captureが進行中は先行batchの`response.create`を保留する
 - 同一decision batchの複数Wake発話はbatch drain後に1回のResponseへまとめ、重複Responseを避ける
+- Opus/FFmpeg capture pipelineがcommit前に失敗した場合は`input_audio_buffer.clear`で部分audioを破棄し、そのdecision batchのResponseを抑止する
+- partial input bufferのclear自体に失敗した場合はvoice sessionを終了し、安全性不明なbufferを後続発話へ持ち越さない
 - `input_audio_buffer.commit`へclient event IDを付与し、commit errorを該当requestへ相関する
 - ACK前timeoutで相関安全性を失った場合はfail closedし、Realtime socketとDiscord voice sessionを終了する
 - 同時発話の完全処理は未対応。1つの音声capture中は別speakerの開始を受け付けない
@@ -270,12 +272,15 @@ AI発話中:
 - 後続capture中に先行Responseを開始してユーザー音声へ被せない
 - back-to-back Wake発話で重複Responseを生成しない
 
-### Commit / Transcription failure
+### Pipeline / Commit / Transcription failure
 
 通常E2E中に故意にSecretや音声本文をログへ出力しないでください。
 
 期待:
 
+- Opus/FFmpeg pipelineがcommit前に失敗した場合、partial input bufferへ`input_audio_buffer.clear`を送る
+- pipeline failureはordered decision batchで`suppress-response`となり、先行Wakeがpartial/unclassified audioを含むResponseを開始しない
+- input buffer clearに失敗した場合はvoice sessionを終了する
 - commit errorが発生した場合、client event IDで該当pending requestだけを失敗扱いにする
 - Transcription失敗時、committed item IDを保持して`conversation.item.delete`を試行する
 - ACK前timeoutが発生した場合は相関queueを使い続けずfail closedする
@@ -328,6 +333,7 @@ docker compose down
 - [ ] Transcription latency中の次発話を取りこぼさない
 - [ ] commit順でWake/delete/response判定する
 - [ ] back-to-back Wake発話で重複Responseを作らない
+- [ ] pipeline failure時にpartial input bufferをclearし、先行Responseを抑止する
 - [ ] commit errorをclient event IDで相関できる
 - [ ] ACK前timeout時にfail closedする
 - [ ] Transcription failure時にcommitted itemをcleanupできる
