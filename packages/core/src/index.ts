@@ -24,3 +24,25 @@ export function buildPersonaInstructions(persona: PersonaDefinition): string {
     `呼びかけ語は「${persona.wakeWord}」です。`,
   ].join('\n');
 }
+
+export function normalizeWakeWordText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('ja-JP')
+    .replace(/[\s\p{P}\p{S}]/gu, '');
+}
+
+export function containsWakeWord(transcript: string, wakeWords: readonly string[]): boolean {
+  const normalizedTranscript = normalizeWakeWordText(transcript);
+  if (!normalizedTranscript) return false;
+
+  return wakeWords.some((wakeWord) => {
+    const normalizedWakeWord = normalizeWakeWordText(wakeWord);
+    return normalizedWakeWord.length > 0 && normalizedTranscript.includes(normalizedWakeWord);
+  });
+}
+
+export function buildWakeWordTranscriptionPrompt(wakeWords: readonly string[]): string {
+  const candidates = wakeWords.map((wakeWord) => wakeWord.trim()).filter(Boolean);
+  return `Discord音声の日本語文字起こしです。固有の呼びかけ語候補: ${candidates.join('、')}`;
+}
