@@ -420,9 +420,35 @@ export class VoiceSessionManager {
           });
         })
         .catch((error: unknown) => {
+          let partialBufferCleared = false;
+          try {
+            session.realtime.clearAudioBuffer();
+            partialBufferCleared = true;
+          } catch (clearError) {
+            this.logger.warn('Failed to clear partial realtime input buffer after pipeline failure', {
+              guildId: session.guildId,
+              userId,
+              error: clearError instanceof Error ? clearError.message : String(clearError),
+            });
+
+            if (this.sessions.get(session.guildId) === session) {
+              void this.leave(session.guildId).catch((leaveError: unknown) => {
+                this.logger.error('Failed to close voice session after input buffer clear failure', {
+                  guildId: session.guildId,
+                  error: leaveError instanceof Error ? leaveError.message : String(leaveError),
+                });
+              });
+            }
+          }
+
+          // Preserve commit-order semantics: this failed capture occupies its place in the batch and
+          // prevents an earlier wake decision from creating a response against an unclassified buffer.
+          inputDecisionQueue.enqueue(async () => 'suppress-response');
+
           this.logger.warn('Discord input audio pipeline ended with an error', {
             guildId: session.guildId,
             userId,
+            partialBufferCleared,
             error: error instanceof Error ? error.message : String(error),
           });
         })
