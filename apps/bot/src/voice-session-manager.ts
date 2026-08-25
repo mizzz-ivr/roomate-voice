@@ -13,7 +13,10 @@ import {
   joinVoiceChannel,
   type VoiceConnection,
 } from '@discordjs/voice';
-import { OpenAIRealtimeClient } from '@roomate-voice/openai-realtime';
+import {
+  InputAudioTranscriptionError,
+  OpenAIRealtimeClient,
+} from '@roomate-voice/openai-realtime';
 import {
   buildPersonaInstructions,
   buildWakeWordTranscriptionPrompt,
@@ -23,6 +26,7 @@ import prism from 'prism-media';
 import type { ChatInputCommandInteraction, GuildMember, VoiceBasedChannel } from 'discord.js';
 import type { AppConfig } from '@roomate-voice/config';
 import type { Logger } from './logger.js';
+import { SpeakerCaptureLock } from './speaker-capture-lock.js';
 
 const pipeline = promisify(pipelineCallback);
 
@@ -32,7 +36,7 @@ interface GuildVoiceSession {
   connection: VoiceConnection;
   realtime: OpenAIRealtimeClient;
   wakeWords: string[];
-  activeSpeakerId: string | undefined;
+  speakerCaptureLock: SpeakerCaptureLock;
   outputPcm: PassThrough | undefined;
   responseInProgress: boolean;
   startedAt: number;
@@ -116,7 +120,7 @@ export class VoiceSessionManager {
       connection,
       realtime,
       wakeWords,
-      activeSpeakerId: undefined,
+      speakerCaptureLock: new SpeakerCaptureLock(),
       outputPcm: undefined,
       responseInProgress: false,
       startedAt: Date.now(),
@@ -233,7 +237,7 @@ export class VoiceSessionManager {
     stopPlayer: (force?: boolean) => boolean,
   ): void {
     session.connection.receiver.speaking.on('start', (userId) => {
-      if (userId === botUserId || session.activeSpeakerId) return;
+      if (userId === botUserId || !session.speakerCaptureLock.tryAcquire(userId)) return;
 
       const isBargeIn = session.responseInProgress || Boolean(session.outputPcm);
       if (isBargeIn) {
@@ -252,7 +256,6 @@ export class VoiceSessionManager {
         }
       }
 
-      session.activeSpeakerId = userId;
       const opus = session.connection.receiver.subscribe(userId, {
         end: {
           behavior: EndBehaviorType.AfterSilence,
@@ -298,8 +301,13 @@ export class VoiceSessionManager {
       });
 
       void pipeline(opus, decoder, transcoder)
-        .then(async () => {
-          const { itemId, transcript } = await session.realtime.commitAudioAndWaitForTranscript();
+        .then(() => {
+          // Capture is complete as soon as the Discord audio pipeline ends. Do not hold this lock
+          // while waiting on network-bound transcription, otherwise a later speaking.start is lost.
+          session.speakerCaptureLock.release(userId);
+          return session.realtime.commitAudioAndWaitForTranscript();
+        })
+        .then(({ itemId, transcript }) => {
           const wakeWordMatched = containsWakeWord(transcript, session.wakeWords);
           const shouldRespond = isBargeIn || wakeWordMatched;
 
@@ -327,14 +335,30 @@ export class VoiceSessionManager {
           session.responseInProgress = true;
         })
         .catch((error: unknown) => {
+          if (error instanceof InputAudioTranscriptionError && error.itemId) {
+            try {
+              session.realtime.deleteConversationItem(error.itemId);
+            } catch (cleanupError) {
+              this.logger.warn('Failed to delete realtime item after transcription failure', {
+                guildId: session.guildId,
+                userId,
+                error:
+                  cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+              });
+            }
+          }
+
           this.logger.warn('Discord input audio pipeline or transcription ended with an error', {
             guildId: session.guildId,
             userId,
+            committedItemCleanupAttempted:
+              error instanceof InputAudioTranscriptionError && Boolean(error.itemId),
             error: error instanceof Error ? error.message : String(error),
           });
         })
         .finally(() => {
-          session.activeSpeakerId = undefined;
+          // Guarded release prevents a late completion for an older utterance from unlocking a newer one.
+          session.speakerCaptureLock.release(userId);
         });
     });
   }
