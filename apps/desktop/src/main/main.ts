@@ -81,7 +81,7 @@ async function createMainWindow(): Promise<void> {
     backgroundColor: '#101218',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(currentDirectory, 'preload.cjs'),
+      preload: path.join(currentDirectory, '..', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -96,7 +96,7 @@ async function createMainWindow(): Promise<void> {
   if (developmentRendererUrl) {
     await window.loadURL(developmentRendererUrl);
   } else {
-    await window.loadFile(path.join(currentDirectory, '..', 'renderer', 'index.html'));
+    await window.loadFile(path.join(currentDirectory, '..', '..', 'renderer', 'index.html'));
   }
 
   mainWindow = window;
