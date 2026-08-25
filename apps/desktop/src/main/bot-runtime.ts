@@ -75,7 +75,9 @@ export class BotRuntimeController {
         if (message) this.lastError = message.slice(-2_000);
       });
       child.once('exit', (code, signal) => {
-        if (this.child === child) this.child = undefined;
+        if (this.child !== child) return;
+
+        this.child = undefined;
         this.stopHealthPolling();
         this.health = undefined;
 
@@ -131,13 +133,6 @@ export class BotRuntimeController {
       };
 
       child.once('exit', onExit);
-
-      if (child.exitCode !== null || child.signalCode !== null) {
-        child.off('exit', onExit);
-        resolve();
-        return;
-      }
-
       child.kill();
       forceTimer = setTimeout(() => {
         if (this.child === child && child.exitCode === null && child.signalCode === null) {
