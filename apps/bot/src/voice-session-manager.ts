@@ -237,7 +237,10 @@ export class VoiceSessionManager {
     stopPlayer: (force?: boolean) => boolean,
   ): void {
     session.connection.receiver.speaking.on('start', (userId) => {
-      if (userId === botUserId || !session.speakerCaptureLock.tryAcquire(userId)) return;
+      if (userId === botUserId) return;
+
+      const captureLease = session.speakerCaptureLock.tryAcquire(userId);
+      if (!captureLease) return;
 
       const isBargeIn = session.responseInProgress || Boolean(session.outputPcm);
       if (isBargeIn) {
@@ -304,7 +307,7 @@ export class VoiceSessionManager {
         .then(() => {
           // Capture is complete as soon as the Discord audio pipeline ends. Do not hold this lock
           // while waiting on network-bound transcription, otherwise a later speaking.start is lost.
-          session.speakerCaptureLock.release(userId);
+          session.speakerCaptureLock.release(captureLease);
           return session.realtime.commitAudioAndWaitForTranscript();
         })
         .then(({ itemId, transcript }) => {
@@ -357,8 +360,8 @@ export class VoiceSessionManager {
           });
         })
         .finally(() => {
-          // Guarded release prevents a late completion for an older utterance from unlocking a newer one.
-          session.speakerCaptureLock.release(userId);
+          // Lease identity makes this safe even if the same user has already started another utterance.
+          session.speakerCaptureLock.release(captureLease);
         });
     });
   }
