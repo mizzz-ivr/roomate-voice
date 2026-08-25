@@ -4,6 +4,7 @@ import {
   createAppendAudio,
   createCancelResponse,
   createCommitAudio,
+  createDeleteConversationItem,
   createResponseRequest,
   createSessionUpdate,
   type RealtimeEvent,
@@ -21,12 +22,20 @@ export interface RealtimeUsage {
   raw: unknown;
 }
 
+export interface InputAudioTranscript {
+  itemId: string;
+  transcript: string;
+}
+
 export interface RealtimeClientEvents {
   connected: [];
   disconnected: [code: number, reason: string];
   audioDelta: [chunk: Buffer];
   audioDone: [];
   transcriptDelta: [delta: string];
+  inputAudioCommitted: [itemId: string];
+  inputTranscriptCompleted: [itemId: string, transcript: string];
+  inputTranscriptFailed: [itemId: string | undefined, error: Error];
   responseDone: [usage?: RealtimeUsage];
   realtimeError: [error: Error];
   rawEvent: [event: RealtimeEvent];
@@ -91,12 +100,60 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     this.send(createCommitAudio());
   }
 
+  public async commitAudioAndWaitForTranscript(timeoutMs = 15_000): Promise<InputAudioTranscript> {
+    return new Promise<InputAudioTranscript>((resolve, reject) => {
+      let expectedItemId: string | undefined;
+
+      const onCommitted = (itemId: string) => {
+        expectedItemId = itemId;
+      };
+      const onCompleted = (itemId: string, transcript: string) => {
+        if (!expectedItemId || itemId !== expectedItemId) return;
+        cleanup();
+        resolve({ itemId, transcript });
+      };
+      const onFailed = (itemId: string | undefined, error: Error) => {
+        if (!expectedItemId) return;
+        if (itemId && itemId !== expectedItemId) return;
+        cleanup();
+        reject(error);
+      };
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Realtime input transcription timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timeout.unref();
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        this.removeListener('inputAudioCommitted', onCommitted);
+        this.removeListener('inputTranscriptCompleted', onCompleted);
+        this.removeListener('inputTranscriptFailed', onFailed);
+      };
+
+      this.on('inputAudioCommitted', onCommitted);
+      this.on('inputTranscriptCompleted', onCompleted);
+      this.on('inputTranscriptFailed', onFailed);
+
+      try {
+        this.commitAudio();
+      } catch (error) {
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
   public requestResponse(): void {
     this.send(createResponseRequest());
   }
 
   public cancelResponse(): void {
     this.send(createCancelResponse());
+  }
+
+  public deleteConversationItem(itemId: string): void {
+    this.send(createDeleteConversationItem(itemId));
   }
 
   public async close(): Promise<void> {
@@ -146,6 +203,30 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
       ) {
         const delta = event.delta;
         if (typeof delta === 'string') this.emit('transcriptDelta', delta);
+        return;
+      }
+
+      if (event.type === 'input_audio_buffer.committed') {
+        const itemId = event.item_id;
+        if (typeof itemId === 'string') this.emit('inputAudioCommitted', itemId);
+        return;
+      }
+
+      if (event.type === 'conversation.item.input_audio_transcription.completed') {
+        const itemId = event.item_id;
+        const transcript = event.transcript;
+        if (typeof itemId === 'string' && typeof transcript === 'string') {
+          this.emit('inputTranscriptCompleted', itemId, transcript);
+        }
+        return;
+      }
+
+      if (event.type === 'conversation.item.input_audio_transcription.failed') {
+        const itemId = typeof event.item_id === 'string' ? event.item_id : undefined;
+        const details = event.error as { message?: unknown } | undefined;
+        const message =
+          typeof details?.message === 'string' ? details.message : 'Realtime input transcription failed';
+        this.emit('inputTranscriptFailed', itemId, new Error(message));
         return;
       }
 

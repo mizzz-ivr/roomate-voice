@@ -14,7 +14,11 @@ import {
   type VoiceConnection,
 } from '@discordjs/voice';
 import { OpenAIRealtimeClient } from '@roomate-voice/openai-realtime';
-import { buildPersonaInstructions } from '@roomate-voice/core';
+import {
+  buildPersonaInstructions,
+  buildWakeWordTranscriptionPrompt,
+  containsWakeWord,
+} from '@roomate-voice/core';
 import prism from 'prism-media';
 import type { ChatInputCommandInteraction, GuildMember, VoiceBasedChannel } from 'discord.js';
 import type { AppConfig } from '@roomate-voice/config';
@@ -27,9 +31,19 @@ interface GuildVoiceSession {
   channelId: string;
   connection: VoiceConnection;
   realtime: OpenAIRealtimeClient;
+  wakeWords: string[];
   activeSpeakerId: string | undefined;
   outputPcm: PassThrough | undefined;
+  responseInProgress: boolean;
   startedAt: number;
+}
+
+function resolveWakeWords(config: AppConfig): string[] {
+  const aliases = config.BOT_WAKE_WORD_ALIASES.split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return [...new Set([config.BOT_WAKE_WORD, ...aliases])];
 }
 
 export class VoiceSessionManager {
@@ -80,6 +94,7 @@ export class VoiceSessionManager {
     });
     connection.subscribe(player);
 
+    const wakeWords = resolveWakeWords(this.config);
     const realtime = new OpenAIRealtimeClient({
       apiKey: this.config.OPENAI_API_KEY,
       model: this.config.OPENAI_REALTIME_MODEL,
@@ -89,6 +104,10 @@ export class VoiceSessionManager {
         style: this.config.BOT_PERSONA_STYLE,
         wakeWord: this.config.BOT_WAKE_WORD,
       }),
+      inputTranscription: {
+        model: this.config.OPENAI_TRANSCRIPTION_MODEL,
+        prompt: buildWakeWordTranscriptionPrompt(wakeWords),
+      },
     });
 
     const session: GuildVoiceSession = {
@@ -96,8 +115,10 @@ export class VoiceSessionManager {
       channelId: channel.id,
       connection,
       realtime,
+      wakeWords,
       activeSpeakerId: undefined,
       outputPcm: undefined,
+      responseInProgress: false,
       startedAt: Date.now(),
     };
 
@@ -138,7 +159,10 @@ export class VoiceSessionManager {
       session.outputPcm = undefined;
     };
     realtime.on('audioDone', finishOutput);
-    realtime.on('responseDone', finishOutput);
+    realtime.on('responseDone', () => {
+      session.responseInProgress = false;
+      finishOutput();
+    });
     realtime.on('realtimeError', (error) => {
       this.logger.error('OpenAI Realtime error', {
         guildId: session.guildId,
@@ -173,6 +197,8 @@ export class VoiceSessionManager {
       guildId: interaction.guildId,
       channelId: channel.id,
       model: this.config.OPENAI_REALTIME_MODEL,
+      transcriptionModel: this.config.OPENAI_TRANSCRIPTION_MODEL,
+      wakeWordGate: true,
     });
 
     return channel;
@@ -209,9 +235,10 @@ export class VoiceSessionManager {
     session.connection.receiver.speaking.on('start', (userId) => {
       if (userId === botUserId || session.activeSpeakerId) return;
 
-      if (session.outputPcm) {
+      const isBargeIn = session.responseInProgress || Boolean(session.outputPcm);
+      if (isBargeIn) {
         stopPlayer(true);
-        session.outputPcm.destroy();
+        session.outputPcm?.destroy();
         session.outputPcm = undefined;
         try {
           session.realtime.cancelResponse();
@@ -220,6 +247,8 @@ export class VoiceSessionManager {
             guildId: session.guildId,
             error: error instanceof Error ? error.message : String(error),
           });
+        } finally {
+          session.responseInProgress = false;
         }
       }
 
@@ -269,12 +298,36 @@ export class VoiceSessionManager {
       });
 
       void pipeline(opus, decoder, transcoder)
-        .then(() => {
-          session.realtime.commitAudio();
+        .then(async () => {
+          const { itemId, transcript } = await session.realtime.commitAudioAndWaitForTranscript();
+          const wakeWordMatched = containsWakeWord(transcript, session.wakeWords);
+          const shouldRespond = isBargeIn || wakeWordMatched;
+
+          this.logger.debug('Wake word transcription evaluated', {
+            guildId: session.guildId,
+            userId,
+            matched: wakeWordMatched,
+            bypassedForBargeIn: isBargeIn,
+            transcriptLength: transcript.length,
+          });
+
+          if (!shouldRespond) {
+            try {
+              session.realtime.deleteConversationItem(itemId);
+            } catch (error) {
+              this.logger.warn('Failed to delete ignored realtime conversation item', {
+                guildId: session.guildId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            return;
+          }
+
           session.realtime.requestResponse();
+          session.responseInProgress = true;
         })
         .catch((error: unknown) => {
-          this.logger.warn('Discord input audio pipeline ended with an error', {
+          this.logger.warn('Discord input audio pipeline or transcription ended with an error', {
             guildId: session.guildId,
             userId,
             error: error instanceof Error ? error.message : String(error),

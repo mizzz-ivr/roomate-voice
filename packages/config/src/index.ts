@@ -13,6 +13,7 @@ export const appConfigSchema = z.object({
   DISCORD_GUILD_ID: optionalSnowflake,
   OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
   OPENAI_REALTIME_MODEL: z.string().min(1).default('gpt-realtime-2.1-mini'),
+  OPENAI_TRANSCRIPTION_MODEL: z.string().min(1).default('gpt-transcribe'),
   OPENAI_VOICE: z.string().min(1).default('marin'),
   BOT_HTTP_PORT: z.coerce.number().int().positive().max(65_535).default(3001),
   BOT_PERSONA_NAME: z.string().min(1).max(64).default('RooMate'),
@@ -22,6 +23,7 @@ export const appConfigSchema = z.object({
     .max(2_000)
     .default('明るく親しみやすいゲーム仲間。返答は短くする。'),
   BOT_WAKE_WORD: z.string().min(1).max(32).default('ルーメイト'),
+  BOT_WAKE_WORD_ALIASES: z.string().max(256).default(''),
   BOT_SILENCE_MS: z.coerce.number().int().min(300).max(5_000).default(900),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });

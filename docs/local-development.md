@@ -2,7 +2,7 @@
 
 このページは日常開発向けの短縮版です。
 
-Discord Application作成、OpenAI API準備、Windows環境構築、VC音声往復、割り込み、Docker、トラブルシューティングまで含む初回手順は、次を使用してください。
+Discord Application作成、OpenAI API準備、Windows環境構築、VC音声往復、Wake word判定、割り込み、Docker、トラブルシューティングまで含む初回手順は、次を使用してください。
 
 - [WindowsローカルE2E音声テスト手順書](windows-local-e2e-runbook.md)
 - [E2Eテスト結果テンプレート](e2e-test-record-template.md)
@@ -74,21 +74,34 @@ Privileged Message Content Intentは不要です。Botは`Guilds`と`GuildVoiceS
 
 ローカル開発では`DISCORD_GUILD_ID`を設定してください。Guild commandは反映が速く、Global commandの反映待ちを避けられます。
 
+## Wake word設定
+
+```env
+OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
+BOT_WAKE_WORD=ルーメイト
+BOT_WAKE_WORD_ALIASES=ルームメイト
+```
+
+`BOT_WAKE_WORD_ALIASES`はカンマ区切りです。文字起こし時の表記揺れを追加できます。
+
+Wake word判定はOpenAI Realtimeの入力文字起こしを利用するため、Active Speakerの音声は判定前にAPIへ送信されます。Wake word不一致の発話ではAI応答を生成せず、その入力アイテムをRealtime会話履歴から削除します。
+
 ## 音声テスト
 
 1. Discordでテスト用VCへ入る
 2. `/status`を実行する
 3. `/join`を実行する
-4. Botが参加したら2〜5秒程度話す
-5. 約1秒無言になり、OpenAIの音声応答を待つ
-6. AI再生中に話し、割り込みを確認する
-7. `/leave`で退出させる
-8. `docs/e2e-test-record-template.md`へ結果を記録する
+4. Wake wordを含めず「今日マイクラやる？」などと話し、Botが応答しないことを確認する
+5. 「ルーメイト、聞こえる？」と話し、Botが応答することを確認する
+6. `BOT_WAKE_WORD_ALIASES`を設定している場合は、別表記でも応答することを確認する
+7. AI再生中に話し、割り込みを確認する
+8. `/leave`で退出させる
+9. `docs/e2e-test-record-template.md`へ結果を記録する
 
 ## 現在の制約
 
-- `BOT_WAKE_WORD`はまだ入力音声の前段判定ではありません
 - VC内で最初に話した1人をActive Speakerとして処理します
 - 同時発話の完全対応は未実装です
+- Wake word判定は入力文字起こしベースで、ローカルの前段音響フィルターではありません
 - Guild設定、会話履歴、利用量はまだ永続化しません
-- APIを利用する音声疎通テストは課金を伴うためCIでは実行しません
+- APIを利用する音声疎通・文字起こしテストは課金を伴うためCIでは実行しません

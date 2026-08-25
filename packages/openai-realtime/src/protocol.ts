@@ -1,9 +1,16 @@
+export interface RealtimeInputTranscriptionOptions {
+  model: string;
+  prompt?: string;
+  language?: string;
+}
+
 export interface RealtimeSessionOptions {
   model: string;
   voice: string;
   instructions: string;
   inputSampleRate?: number;
   outputSampleRate?: number;
+  inputTranscription?: RealtimeInputTranscriptionOptions;
 }
 
 export interface RealtimeEvent {
@@ -12,6 +19,14 @@ export interface RealtimeEvent {
 }
 
 export function createSessionUpdate(options: RealtimeSessionOptions): RealtimeEvent {
+  const transcription = options.inputTranscription
+    ? {
+        model: options.inputTranscription.model,
+        ...(options.inputTranscription.prompt ? { prompt: options.inputTranscription.prompt } : {}),
+        ...(options.inputTranscription.language ? { language: options.inputTranscription.language } : {}),
+      }
+    : undefined;
+
   return {
     type: 'session.update',
     session: {
@@ -26,6 +41,7 @@ export function createSessionUpdate(options: RealtimeSessionOptions): RealtimeEv
             rate: options.inputSampleRate ?? 24_000,
           },
           turn_detection: null,
+          ...(transcription ? { transcription } : {}),
         },
         output: {
           format: {
@@ -56,4 +72,11 @@ export function createResponseRequest(): RealtimeEvent {
 
 export function createCancelResponse(): RealtimeEvent {
   return { type: 'response.cancel' };
+}
+
+export function createDeleteConversationItem(itemId: string): RealtimeEvent {
+  return {
+    type: 'conversation.item.delete',
+    item_id: itemId,
+  };
 }
