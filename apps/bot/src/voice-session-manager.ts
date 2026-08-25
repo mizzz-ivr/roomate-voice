@@ -25,6 +25,7 @@ import {
 import prism from 'prism-media';
 import type { ChatInputCommandInteraction, GuildMember, VoiceBasedChannel } from 'discord.js';
 import type { AppConfig } from '@roomate-voice/config';
+import { InputDecisionQueue, type InputDecision } from './input-decision-queue.js';
 import type { Logger } from './logger.js';
 import { SpeakerCaptureLock } from './speaker-capture-lock.js';
 
@@ -126,6 +127,26 @@ export class VoiceSessionManager {
       startedAt: Date.now(),
     };
 
+    const inputDecisionQueue = new InputDecisionQueue({
+      onResponseReady: () => {
+        try {
+          session.realtime.requestResponse();
+          session.responseInProgress = true;
+        } catch (error) {
+          this.logger.warn('Failed to create realtime response after input decisions drained', {
+            guildId: session.guildId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      onError: (error) => {
+        this.logger.warn('Ordered realtime input decision queue failed closed', {
+          guildId: session.guildId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    });
+
     realtime.on('audioDelta', (chunk) => {
       if (!session.outputPcm) {
         const input = new PassThrough();
@@ -173,6 +194,22 @@ export class VoiceSessionManager {
         error: error.message,
       });
     });
+    realtime.on('disconnected', (code, reason) => {
+      this.logger.warn('OpenAI Realtime disconnected', {
+        guildId: session.guildId,
+        code,
+        reason,
+      });
+
+      if (this.sessions.get(session.guildId) === session) {
+        void this.leave(session.guildId).catch((error: unknown) => {
+          this.logger.error('Failed to close Discord voice session after realtime disconnect', {
+            guildId: session.guildId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
+    });
 
     player.on('error', (error) => {
       this.logger.error('Discord audio player error', {
@@ -194,7 +231,12 @@ export class VoiceSessionManager {
     });
 
     await realtime.connect();
-    this.attachReceiver(session, interaction.client.user.id, player.stop.bind(player));
+    this.attachReceiver(
+      session,
+      inputDecisionQueue,
+      interaction.client.user.id,
+      player.stop.bind(player),
+    );
     this.sessions.set(interaction.guildId, session);
 
     this.logger.info('Voice session started', {
@@ -233,6 +275,7 @@ export class VoiceSessionManager {
 
   private attachReceiver(
     session: GuildVoiceSession,
+    inputDecisionQueue: InputDecisionQueue,
     botUserId: string,
     stopPlayer: (force?: boolean) => boolean,
   ): void {
@@ -241,6 +284,7 @@ export class VoiceSessionManager {
 
       const captureLease = session.speakerCaptureLock.tryAcquire(userId);
       if (!captureLease) return;
+      inputDecisionQueue.beginCapture();
 
       const isBargeIn = session.responseInProgress || Boolean(session.outputPcm);
       if (isBargeIn) {
@@ -305,63 +349,87 @@ export class VoiceSessionManager {
 
       void pipeline(opus, decoder, transcoder)
         .then(() => {
-          // Capture is complete as soon as the Discord audio pipeline ends. Do not hold this lock
-          // while waiting on network-bound transcription, otherwise a later speaking.start is lost.
+          // Capture is complete as soon as the Discord audio pipeline ends. The lease can be released
+          // before network-bound transcription, but response creation remains held until any newer
+          // active capture has also been committed and classified.
           session.speakerCaptureLock.release(captureLease);
-          return session.realtime.commitAudioAndWaitForTranscript();
-        })
-        .then(({ itemId, transcript }) => {
-          const wakeWordMatched = containsWakeWord(transcript, session.wakeWords);
-          const shouldRespond = isBargeIn || wakeWordMatched;
 
-          this.logger.debug('Wake word transcription evaluated', {
-            guildId: session.guildId,
-            userId,
-            matched: wakeWordMatched,
-            bypassedForBargeIn: isBargeIn,
-            transcriptLength: transcript.length,
-          });
+          const transcription = session.realtime.commitAudioAndWaitForTranscript();
+          const settledTranscription = transcription.then(
+            (value) => ({ ok: true as const, value }),
+            (error: unknown) => ({ ok: false as const, error }),
+          );
 
-          if (!shouldRespond) {
-            try {
-              session.realtime.deleteConversationItem(itemId);
-            } catch (error) {
-              this.logger.warn('Failed to delete ignored realtime conversation item', {
-                guildId: session.guildId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-            return;
-          }
+          inputDecisionQueue.enqueue(async (): Promise<InputDecision> => {
+            const result = await settledTranscription;
+            if (!result.ok) {
+              const error = result.error;
+              if (error instanceof InputAudioTranscriptionError && error.itemId) {
+                try {
+                  session.realtime.deleteConversationItem(error.itemId);
+                } catch (cleanupError) {
+                  this.logger.warn('Failed to delete realtime item after transcription failure', {
+                    guildId: session.guildId,
+                    userId,
+                    error:
+                      cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                  });
+                }
+              }
 
-          session.realtime.requestResponse();
-          session.responseInProgress = true;
-        })
-        .catch((error: unknown) => {
-          if (error instanceof InputAudioTranscriptionError && error.itemId) {
-            try {
-              session.realtime.deleteConversationItem(error.itemId);
-            } catch (cleanupError) {
-              this.logger.warn('Failed to delete realtime item after transcription failure', {
+              this.logger.warn('Discord input transcription ended with an error', {
                 guildId: session.guildId,
                 userId,
-                error:
-                  cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                committedItemCleanupAttempted:
+                  error instanceof InputAudioTranscriptionError && Boolean(error.itemId),
+                correlationLost:
+                  error instanceof InputAudioTranscriptionError && error.correlationLost,
+                error: error instanceof Error ? error.message : String(error),
               });
-            }
-          }
 
-          this.logger.warn('Discord input audio pipeline or transcription ended with an error', {
+              return error instanceof InputAudioTranscriptionError && error.correlationLost
+                ? 'suppress-response'
+                : 'ignore';
+            }
+
+            const { itemId, transcript } = result.value;
+            const wakeWordMatched = containsWakeWord(transcript, session.wakeWords);
+            const shouldRespond = isBargeIn || wakeWordMatched;
+
+            this.logger.debug('Wake word transcription evaluated', {
+              guildId: session.guildId,
+              userId,
+              matched: wakeWordMatched,
+              bypassedForBargeIn: isBargeIn,
+              transcriptLength: transcript.length,
+            });
+
+            if (!shouldRespond) {
+              try {
+                session.realtime.deleteConversationItem(itemId);
+              } catch (error) {
+                this.logger.warn('Failed to delete ignored realtime conversation item', {
+                  guildId: session.guildId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
+              return 'ignore';
+            }
+
+            return 'respond';
+          });
+        })
+        .catch((error: unknown) => {
+          this.logger.warn('Discord input audio pipeline ended with an error', {
             guildId: session.guildId,
             userId,
-            committedItemCleanupAttempted:
-              error instanceof InputAudioTranscriptionError && Boolean(error.itemId),
             error: error instanceof Error ? error.message : String(error),
           });
         })
         .finally(() => {
-          // Lease identity makes this safe even if the same user has already started another utterance.
+          // Lease identity keeps this safe even if the same user has already started another utterance.
           session.speakerCaptureLock.release(captureLease);
+          inputDecisionQueue.endCapture();
         });
     });
   }
