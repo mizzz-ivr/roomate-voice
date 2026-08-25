@@ -50,8 +50,11 @@ jobs:
           $required = @(
             'apps/desktop/release/win-unpacked/resources/worker/index.js',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/package.json',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/dist/index.js',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/core/package.json',
-            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/openai-realtime/package.json'
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/core/dist/index.js',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/openai-realtime/package.json',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/openai-realtime/dist/index.js'
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) {
