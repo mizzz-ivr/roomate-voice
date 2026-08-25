@@ -11,6 +11,7 @@ const developmentRendererUrl = process.env.ROOMATE_DESKTOP_DEV_SERVER_URL;
 let mainWindow: BrowserWindow | undefined;
 let settingsStore: DesktopSettingsStore | undefined;
 let botRuntime: BotRuntimeController | undefined;
+let quitAfterWorkerStops = false;
 
 async function buildBootstrap(): Promise<DesktopBootstrap> {
   if (!settingsStore || !botRuntime) throw new Error('Desktop services are not initialized.');
@@ -37,6 +38,14 @@ function applyLoginSettings(launchAtLogin: boolean): void {
     openAtLogin: launchAtLogin,
     path: process.execPath,
   });
+}
+
+function focusMainWindow(): void {
+  const window = mainWindow;
+  if (!window) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
 }
 
 function registerIpcHandlers(): void {
@@ -102,30 +111,42 @@ async function createMainWindow(): Promise<void> {
   mainWindow = window;
 }
 
-await app.whenReady();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-settingsStore = new DesktopSettingsStore(app.getPath('userData'));
-botRuntime = new BotRuntimeController(settingsStore, (snapshot) => {
-  mainWindow?.webContents.send('desktop:runtime-status', snapshot);
-});
-registerIpcHandlers();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => focusMainWindow());
 
-const initialSettings = await settingsStore.getPublicSettings();
-applyLoginSettings(initialSettings.launchAtLogin);
-await createMainWindow();
+  await app.whenReady();
 
-if (initialSettings.startBotOnLaunch) {
-  void botRuntime.start();
+  settingsStore = new DesktopSettingsStore(app.getPath('userData'));
+  botRuntime = new BotRuntimeController(settingsStore, (snapshot) => {
+    mainWindow?.webContents.send('desktop:runtime-status', snapshot);
+  });
+  registerIpcHandlers();
+
+  const initialSettings = await settingsStore.getPublicSettings();
+  applyLoginSettings(initialSettings.launchAtLogin);
+  await createMainWindow();
+
+  if (initialSettings.startBotOnLaunch) {
+    void botRuntime.start();
+  }
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+
+  app.on('before-quit', (event) => {
+    if (quitAfterWorkerStops || !botRuntime) return;
+
+    event.preventDefault();
+    quitAfterWorkerStops = true;
+    void botRuntime.close().finally(() => app.quit());
+  });
 }
-
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-app.on('before-quit', () => {
-  void botRuntime?.close();
-});
