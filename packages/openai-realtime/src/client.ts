@@ -37,11 +37,14 @@ export class InputAudioTranscriptionError extends Error {
   }
 }
 
+type PendingInputTranscriptionState = 'pending' | 'timed-out-awaiting-commit';
+
 interface PendingInputTranscription {
   itemId?: string;
   resolve: (value: InputAudioTranscript) => void;
   reject: (reason: Error) => void;
   timeout?: ReturnType<typeof setTimeout>;
+  state: PendingInputTranscriptionState;
 }
 
 export interface RealtimeClientEvents {
@@ -124,14 +127,25 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
       const pending: PendingInputTranscription = {
         resolve,
         reject,
+        state: 'pending',
       };
 
       pending.timeout = setTimeout(() => {
-        this.removePendingInputTranscription(pending);
+        const committedItemId = pending.itemId;
+
+        if (committedItemId) {
+          this.removePendingInputTranscription(pending);
+        } else {
+          // Keep an unacknowledged timed-out commit as a FIFO tombstone. A delayed commit ACK must
+          // consume this slot rather than being reassigned to a newer utterance.
+          this.clearPendingInputTranscriptionTimeout(pending);
+          pending.state = 'timed-out-awaiting-commit';
+        }
+
         reject(
           new InputAudioTranscriptionError(
             `Realtime input transcription timed out after ${timeoutMs}ms`,
-            pending.itemId,
+            committedItemId,
           ),
         );
       }, timeoutMs);
@@ -186,11 +200,15 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     this.socket.send(JSON.stringify(event));
   }
 
-  private removePendingInputTranscription(pending: PendingInputTranscription): void {
+  private clearPendingInputTranscriptionTimeout(pending: PendingInputTranscription): void {
     if (pending.timeout) {
       clearTimeout(pending.timeout);
       delete pending.timeout;
     }
+  }
+
+  private removePendingInputTranscription(pending: PendingInputTranscription): void {
+    this.clearPendingInputTranscriptionTimeout(pending);
 
     const index = this.pendingInputTranscriptions.indexOf(pending);
     if (index >= 0) {
@@ -200,13 +218,31 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
   private assignCommittedItem(itemId: string): void {
     const pending = this.pendingInputTranscriptions.find((request) => !request.itemId);
-    if (pending) {
-      pending.itemId = itemId;
+    if (!pending) return;
+
+    pending.itemId = itemId;
+
+    if (pending.state === 'timed-out-awaiting-commit') {
+      // This ACK belongs to a Promise that already timed out. Consume its FIFO slot and remove the
+      // committed conversation item so neither the ACK nor the ignored audio can leak into a newer turn.
+      this.removePendingInputTranscription(pending);
+      try {
+        this.deleteConversationItem(itemId);
+      } catch (error) {
+        this.emit(
+          'realtimeError',
+          error instanceof Error
+            ? error
+            : new Error('Failed to delete realtime item after delayed commit acknowledgement'),
+        );
+      }
     }
   }
 
   private resolveInputTranscription(itemId: string, transcript: string): void {
-    const pending = this.pendingInputTranscriptions.find((request) => request.itemId === itemId);
+    const pending = this.pendingInputTranscriptions.find(
+      (request) => request.state === 'pending' && request.itemId === itemId,
+    );
     if (!pending) return;
 
     this.removePendingInputTranscription(pending);
@@ -215,8 +251,12 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
   private rejectInputTranscription(itemId: string | undefined, error: Error): void {
     const pending = itemId
-      ? this.pendingInputTranscriptions.find((request) => request.itemId === itemId)
-      : this.pendingInputTranscriptions.find((request) => request.itemId);
+      ? this.pendingInputTranscriptions.find(
+          (request) => request.state === 'pending' && request.itemId === itemId,
+        )
+      : this.pendingInputTranscriptions.find(
+          (request) => request.state === 'pending' && Boolean(request.itemId),
+        );
     if (!pending) return;
 
     const committedItemId = pending.itemId ?? itemId;
@@ -229,8 +269,10 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     this.pendingInputTranscriptions.length = 0;
 
     for (const pending of pendingRequests) {
-      if (pending.timeout) clearTimeout(pending.timeout);
-      pending.reject(new InputAudioTranscriptionError(message, pending.itemId));
+      this.clearPendingInputTranscriptionTimeout(pending);
+      if (pending.state === 'pending') {
+        pending.reject(new InputAudioTranscriptionError(message, pending.itemId));
+      }
     }
   }
 
