@@ -44,6 +44,20 @@ jobs:
         run: npm run typecheck -w @roomate-voice/desktop
       - name: Build Windows Setup.exe
         run: npm run desktop:make:win
+      - name: Verify packaged Voice Worker
+        shell: pwsh
+        run: |
+          $required = @(
+            'apps/desktop/release/win-unpacked/resources/worker/index.js',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/package.json',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/core/package.json',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/openai-realtime/package.json'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              throw "Required packaged worker resource is missing: $path"
+            }
+          }
       - name: Upload Windows installer smoke artifact
         uses: actions/upload-artifact@v4
         with:
