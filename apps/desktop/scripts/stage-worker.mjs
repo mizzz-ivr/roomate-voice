@@ -28,6 +28,27 @@ function collectExternalDependencies(manifests) {
   return dependencies;
 }
 
+function installProductionDependencies() {
+  const args = ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'];
+
+  if (process.platform === 'win32') {
+    execFileSync(
+      process.env.ComSpec || 'cmd.exe',
+      ['/d', '/s', '/c', `npm ${args.join(' ')}`],
+      {
+        cwd: stageRoot,
+        stdio: 'inherit',
+      },
+    );
+    return;
+  }
+
+  execFileSync('npm', args, {
+    cwd: stageRoot,
+    stdio: 'inherit',
+  });
+}
+
 await rm(stageRoot, { recursive: true, force: true });
 await mkdir(stageRoot, { recursive: true });
 
@@ -56,15 +77,7 @@ await writeFile(
   'utf8',
 );
 
-const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-execFileSync(
-  npmExecutable,
-  ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'],
-  {
-    cwd: stageRoot,
-    stdio: 'inherit',
-  },
-);
+installProductionDependencies();
 
 for (const { name, source } of internalPackages) {
   const destination = path.join(stageRoot, 'node_modules', '@roomate-voice', name);
