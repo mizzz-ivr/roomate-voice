@@ -47,6 +47,13 @@ interface PendingInputTranscription {
   timeout?: ReturnType<typeof setTimeout>;
 }
 
+interface PendingAudioBufferClear {
+  clearEventId: string;
+  resolve: () => void;
+  reject: (reason: Error) => void;
+  timeout?: ReturnType<typeof setTimeout>;
+}
+
 export interface RealtimeClientEvents {
   connected: [];
   disconnected: [code: number, reason: string];
@@ -54,6 +61,7 @@ export interface RealtimeClientEvents {
   audioDone: [];
   transcriptDelta: [delta: string];
   inputAudioCommitted: [itemId: string];
+  inputAudioCleared: [];
   inputTranscriptCompleted: [itemId: string, transcript: string];
   inputTranscriptFailed: [itemId: string | undefined, error: Error];
   responseDone: [usage?: RealtimeUsage];
@@ -65,6 +73,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
   private socket: WebSocket | undefined;
   private readonly options: OpenAIRealtimeClientOptions;
   private readonly pendingInputTranscriptions: PendingInputTranscription[] = [];
+  private readonly pendingAudioBufferClears: PendingAudioBufferClear[] = [];
   private inputCorrelationHealthy = true;
   private clientEventSequence = 0;
 
@@ -111,6 +120,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
           this.socket = undefined;
         }
         this.rejectPendingInputTranscriptions(`Realtime socket closed (${code})`);
+        this.rejectPendingAudioBufferClears(`Realtime socket closed (${code})`);
         this.emit('disconnected', code, reason.toString());
       });
       socket.on('error', (error) => {
@@ -124,8 +134,31 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     this.send(createAppendAudio(chunk));
   }
 
-  public clearAudioBuffer(): void {
-    this.send(createClearAudio(this.createClientEventId('clear')));
+  public async clearAudioBuffer(timeoutMs = 5_000): Promise<void> {
+    const clearEventId = this.createClientEventId('clear');
+
+    return new Promise<void>((resolve, reject) => {
+      const pending: PendingAudioBufferClear = {
+        clearEventId,
+        resolve,
+        reject,
+      };
+
+      pending.timeout = setTimeout(() => {
+        this.removePendingAudioBufferClear(pending);
+        reject(new Error(`Realtime input audio buffer clear acknowledgement timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      pending.timeout.unref();
+
+      this.pendingAudioBufferClears.push(pending);
+
+      try {
+        this.send(createClearAudio(clearEventId));
+      } catch (error) {
+        this.removePendingAudioBufferClear(pending);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   public commitAudio(eventId?: string): void {
@@ -198,6 +231,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
     if (!socket || socket.readyState === WebSocket.CLOSED) {
       this.rejectPendingInputTranscriptions('Realtime client closed');
+      this.rejectPendingAudioBufferClears('Realtime client closed');
       return;
     }
 
@@ -236,6 +270,22 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     const index = this.pendingInputTranscriptions.indexOf(pending);
     if (index >= 0) {
       this.pendingInputTranscriptions.splice(index, 1);
+    }
+  }
+
+  private clearPendingAudioBufferClearTimeout(pending: PendingAudioBufferClear): void {
+    if (pending.timeout) {
+      clearTimeout(pending.timeout);
+      delete pending.timeout;
+    }
+  }
+
+  private removePendingAudioBufferClear(pending: PendingAudioBufferClear): void {
+    this.clearPendingAudioBufferClearTimeout(pending);
+
+    const index = this.pendingAudioBufferClears.indexOf(pending);
+    if (index >= 0) {
+      this.pendingAudioBufferClears.splice(index, 1);
     }
   }
 
@@ -283,6 +333,14 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     }
   }
 
+  private resolveAudioBufferClear(): void {
+    const pending = this.pendingAudioBufferClears[0];
+    if (!pending) return;
+
+    this.removePendingAudioBufferClear(pending);
+    pending.resolve();
+  }
+
   private rejectCommitEvent(clientEventId: string, error: Error): boolean {
     const pending = this.pendingInputTranscriptions.find(
       (request) => request.commitEventId === clientEventId && !request.itemId,
@@ -291,6 +349,17 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
     this.removePendingInputTranscription(pending);
     pending.reject(new InputAudioTranscriptionError(error.message));
+    return true;
+  }
+
+  private rejectClearEvent(clientEventId: string, error: Error): boolean {
+    const pending = this.pendingAudioBufferClears.find(
+      (request) => request.clearEventId === clientEventId,
+    );
+    if (!pending) return false;
+
+    this.removePendingAudioBufferClear(pending);
+    pending.reject(error);
     return true;
   }
 
@@ -320,6 +389,16 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     for (const pending of pendingRequests) {
       this.clearPendingInputTranscriptionTimeout(pending);
       pending.reject(new InputAudioTranscriptionError(message, pending.itemId));
+    }
+  }
+
+  private rejectPendingAudioBufferClears(message: string): void {
+    const pendingRequests = [...this.pendingAudioBufferClears];
+    this.pendingAudioBufferClears.length = 0;
+
+    for (const pending of pendingRequests) {
+      this.clearPendingAudioBufferClearTimeout(pending);
+      pending.reject(new Error(message));
     }
   }
 
@@ -357,6 +436,12 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
         return;
       }
 
+      if (event.type === 'input_audio_buffer.cleared') {
+        this.resolveAudioBufferClear();
+        this.emit('inputAudioCleared');
+        return;
+      }
+
       if (event.type === 'conversation.item.input_audio_transcription.completed') {
         const itemId = event.item_id;
         const transcript = event.transcript;
@@ -391,6 +476,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
         const clientEventId = typeof details?.event_id === 'string' ? details.event_id : undefined;
         if (clientEventId) {
           this.rejectCommitEvent(clientEventId, error);
+          this.rejectClearEvent(clientEventId, error);
         }
         this.emit('realtimeError', error);
       }
