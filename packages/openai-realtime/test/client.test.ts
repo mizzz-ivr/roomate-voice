@@ -29,6 +29,8 @@ describe('OpenAIRealtimeClient input transcription correlation', () => {
     const second = client.commitAudioAndWaitForTranscript();
 
     expect(commitSpy).toHaveBeenCalledTimes(2);
+    expect(commitSpy.mock.calls[0]?.[0]).toMatch(/^roomate_commit_/);
+    expect(commitSpy.mock.calls[1]?.[0]).toMatch(/^roomate_commit_/);
 
     emitServerEvent(client, { type: 'input_audio_buffer.committed', item_id: 'item-a' });
     emitServerEvent(client, { type: 'input_audio_buffer.committed', item_id: 'item-b' });
@@ -67,45 +69,83 @@ describe('OpenAIRealtimeClient input transcription correlation', () => {
         name: 'InputAudioTranscriptionError',
         message: 'transcription failed',
         itemId: 'failed-item',
+        correlationLost: false,
       }),
     );
   });
 
-  it('keeps a timed-out unacknowledged commit as a FIFO tombstone', async () => {
+  it('correlates a rejected commit by client event id without poisoning the next request', async () => {
+    const client = createClient();
+    const commitSpy = vi.spyOn(client, 'commitAudio').mockImplementation(() => undefined);
+
+    const first = client.commitAudioAndWaitForTranscript();
+    const firstCommitEventId = commitSpy.mock.calls[0]?.[0];
+    expect(firstCommitEventId).toMatch(/^roomate_commit_/);
+
+    emitServerEvent(client, {
+      type: 'error',
+      error: {
+        message: 'Error committing input audio buffer: buffer too small',
+        event_id: firstCommitEventId,
+      },
+    });
+
+    await expect(first).rejects.toEqual(
+      expect.objectContaining<InputAudioTranscriptionError>({
+        name: 'InputAudioTranscriptionError',
+        message: 'Error committing input audio buffer: buffer too small',
+        correlationLost: false,
+      }),
+    );
+
+    const second = client.commitAudioAndWaitForTranscript();
+    expect(commitSpy).toHaveBeenCalledTimes(2);
+
+    emitServerEvent(client, { type: 'input_audio_buffer.committed', item_id: 'item-b' });
+    emitServerEvent(client, {
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-b',
+      transcript: 'second transcript',
+    });
+
+    await expect(second).resolves.toEqual({ itemId: 'item-b', transcript: 'second transcript' });
+  });
+
+  it('fails closed when a commit acknowledgement never arrives', async () => {
     vi.useFakeTimers();
 
     try {
       const client = createClient();
       const commitSpy = vi.spyOn(client, 'commitAudio').mockImplementation(() => undefined);
-      const deleteSpy = vi.spyOn(client, 'deleteConversationItem').mockImplementation(() => undefined);
 
       const first = client.commitAudioAndWaitForTranscript(50);
+      const second = client.commitAudioAndWaitForTranscript(500);
       const firstRejection = expect(first).rejects.toEqual(
         expect.objectContaining<InputAudioTranscriptionError>({
           name: 'InputAudioTranscriptionError',
-          message: 'Realtime input transcription timed out after 50ms',
+          message: 'Realtime input commit acknowledgement timed out after 50ms',
+          correlationLost: true,
+        }),
+      );
+      const secondRejection = expect(second).rejects.toEqual(
+        expect.objectContaining<InputAudioTranscriptionError>({
+          name: 'InputAudioTranscriptionError',
+          message: 'Realtime input correlation was invalidated by an unacknowledged commit timeout',
+          correlationLost: true,
         }),
       );
 
       await vi.advanceTimersByTimeAsync(50);
       await firstRejection;
+      await secondRejection;
 
-      const second = client.commitAudioAndWaitForTranscript();
+      await expect(client.commitAudioAndWaitForTranscript()).rejects.toEqual(
+        expect.objectContaining<InputAudioTranscriptionError>({
+          name: 'InputAudioTranscriptionError',
+          correlationLost: true,
+        }),
+      );
       expect(commitSpy).toHaveBeenCalledTimes(2);
-
-      // The first ACK arrives late. It must consume the timed-out slot instead of being assigned
-      // to the second request, and its conversation item is cleaned up immediately.
-      emitServerEvent(client, { type: 'input_audio_buffer.committed', item_id: 'late-item-a' });
-      expect(deleteSpy).toHaveBeenCalledWith('late-item-a');
-
-      emitServerEvent(client, { type: 'input_audio_buffer.committed', item_id: 'item-b' });
-      emitServerEvent(client, {
-        type: 'conversation.item.input_audio_transcription.completed',
-        item_id: 'item-b',
-        transcript: 'second transcript',
-      });
-
-      await expect(second).resolves.toEqual({ itemId: 'item-b', transcript: 'second transcript' });
     } finally {
       vi.useRealTimers();
     }
