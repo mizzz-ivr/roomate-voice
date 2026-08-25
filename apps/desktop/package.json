@@ -52,6 +52,30 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "../../packages/config",
+        "to": "worker/node_modules/@roomate-voice/config",
+        "filter": [
+          "package.json",
+          "dist/**/*"
+        ]
+      },
+      {
+        "from": "../../packages/core",
+        "to": "worker/node_modules/@roomate-voice/core",
+        "filter": [
+          "package.json",
+          "dist/**/*"
+        ]
+      },
+      {
+        "from": "../../packages/openai-realtime",
+        "to": "worker/node_modules/@roomate-voice/openai-realtime",
+        "filter": [
+          "package.json",
+          "dist/**/*"
+        ]
       }
     ],
     "win": {
