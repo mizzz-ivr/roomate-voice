@@ -3,6 +3,7 @@ import WebSocket, { type RawData } from 'ws';
 import {
   createAppendAudio,
   createCancelResponse,
+  createClearAudio,
   createCommitAudio,
   createDeleteConversationItem,
   createResponseRequest,
@@ -121,6 +122,10 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
   public appendAudio(chunk: Buffer): void {
     if (chunk.length === 0) return;
     this.send(createAppendAudio(chunk));
+  }
+
+  public clearAudioBuffer(): void {
+    this.send(createClearAudio(this.createClientEventId('clear')));
   }
 
   public commitAudio(eventId?: string): void {
