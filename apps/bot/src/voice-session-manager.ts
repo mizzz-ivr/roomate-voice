@@ -419,31 +419,35 @@ export class VoiceSessionManager {
             return 'respond';
           });
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
+          // Preserve commit-order semantics immediately: this failed capture occupies its place in the
+          // batch and suppresses an earlier wake decision while the clear acknowledgement is pending.
+          inputDecisionQueue.enqueue(async () => 'suppress-response');
+
           let partialBufferCleared = false;
           try {
-            session.realtime.clearAudioBuffer();
+            // Keep the capture lease/hold until the server confirms input_audio_buffer.cleared. A send
+            // succeeding locally is not sufficient because the server can reject the clear event later.
+            await session.realtime.clearAudioBuffer();
             partialBufferCleared = true;
           } catch (clearError) {
-            this.logger.warn('Failed to clear partial realtime input buffer after pipeline failure', {
+            this.logger.warn('Failed to confirm partial realtime input buffer clear after pipeline failure', {
               guildId: session.guildId,
               userId,
               error: clearError instanceof Error ? clearError.message : String(clearError),
             });
 
             if (this.sessions.get(session.guildId) === session) {
-              void this.leave(session.guildId).catch((leaveError: unknown) => {
+              try {
+                await this.leave(session.guildId);
+              } catch (leaveError) {
                 this.logger.error('Failed to close voice session after input buffer clear failure', {
                   guildId: session.guildId,
                   error: leaveError instanceof Error ? leaveError.message : String(leaveError),
                 });
-              });
+              }
             }
           }
-
-          // Preserve commit-order semantics: this failed capture occupies its place in the batch and
-          // prevents an earlier wake decision from creating a response against an unclassified buffer.
-          inputDecisionQueue.enqueue(async () => 'suppress-response');
 
           this.logger.warn('Discord input audio pipeline ended with an error', {
             guildId: session.guildId,
@@ -454,6 +458,7 @@ export class VoiceSessionManager {
         })
         .finally(() => {
           // Lease identity keeps this safe even if the same user has already started another utterance.
+          // On pipeline failure this finally runs only after clear ACK or fail-closed session teardown.
           session.speakerCaptureLock.release(captureLease);
           inputDecisionQueue.endCapture();
         });
