@@ -34,6 +34,7 @@ interface GuildVoiceSession {
   wakeWords: string[];
   activeSpeakerId: string | undefined;
   outputPcm: PassThrough | undefined;
+  responseInProgress: boolean;
   startedAt: number;
 }
 
@@ -117,6 +118,7 @@ export class VoiceSessionManager {
       wakeWords,
       activeSpeakerId: undefined,
       outputPcm: undefined,
+      responseInProgress: false,
       startedAt: Date.now(),
     };
 
@@ -157,7 +159,10 @@ export class VoiceSessionManager {
       session.outputPcm = undefined;
     };
     realtime.on('audioDone', finishOutput);
-    realtime.on('responseDone', finishOutput);
+    realtime.on('responseDone', () => {
+      session.responseInProgress = false;
+      finishOutput();
+    });
     realtime.on('realtimeError', (error) => {
       this.logger.error('OpenAI Realtime error', {
         guildId: session.guildId,
@@ -230,9 +235,10 @@ export class VoiceSessionManager {
     session.connection.receiver.speaking.on('start', (userId) => {
       if (userId === botUserId || session.activeSpeakerId) return;
 
-      if (session.outputPcm) {
+      const isBargeIn = session.responseInProgress || Boolean(session.outputPcm);
+      if (isBargeIn) {
         stopPlayer(true);
-        session.outputPcm.destroy();
+        session.outputPcm?.destroy();
         session.outputPcm = undefined;
         try {
           session.realtime.cancelResponse();
@@ -241,6 +247,8 @@ export class VoiceSessionManager {
             guildId: session.guildId,
             error: error instanceof Error ? error.message : String(error),
           });
+        } finally {
+          session.responseInProgress = false;
         }
       }
 
@@ -293,15 +301,17 @@ export class VoiceSessionManager {
         .then(async () => {
           const { itemId, transcript } = await session.realtime.commitAudioAndWaitForTranscript();
           const wakeWordMatched = containsWakeWord(transcript, session.wakeWords);
+          const shouldRespond = isBargeIn || wakeWordMatched;
 
           this.logger.debug('Wake word transcription evaluated', {
             guildId: session.guildId,
             userId,
             matched: wakeWordMatched,
+            bypassedForBargeIn: isBargeIn,
             transcriptLength: transcript.length,
           });
 
-          if (!wakeWordMatched) {
+          if (!shouldRespond) {
             try {
               session.realtime.deleteConversationItem(itemId);
             } catch (error) {
@@ -314,6 +324,7 @@ export class VoiceSessionManager {
           }
 
           session.realtime.requestResponse();
+          session.responseInProgress = true;
         })
         .catch((error: unknown) => {
           this.logger.warn('Discord input audio pipeline or transcription ended with an error', {
