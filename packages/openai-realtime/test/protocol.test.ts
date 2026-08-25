@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createAppendAudio,
+  createClearAudio,
   createCommitAudio,
   createDeleteConversationItem,
   createSessionUpdate,
@@ -46,6 +47,13 @@ describe('realtime protocol', () => {
     expect(createCommitAudio('roomate_commit_test')).toEqual({
       type: 'input_audio_buffer.commit',
       event_id: 'roomate_commit_test',
+    });
+  });
+
+  it('creates an input audio buffer clear event', () => {
+    expect(createClearAudio('roomate_clear_test')).toEqual({
+      type: 'input_audio_buffer.clear',
+      event_id: 'roomate_clear_test',
     });
   });
 
