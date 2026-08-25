@@ -131,12 +131,15 @@ Invoke-RestMethod http://localhost:3001/health | ConvertTo-Json
 - 同じdecision batch内に複数のWake発話がある場合、未分類itemを含んだ重複Responseを生成せず、batch drain後に1回だけResponseを作成する
 - 次の発話全体を取りこぼさない
 
-## 9. Commit / Transcription failure cleanup
+## 9. Pipeline / Commit / Transcription failure cleanup
 
-Commit failureまたはTranscription failureが発生した場合のログを確認します。故意にSecretや音声本文をログへ追加しないでください。
+Capture pipeline、Commit、Transcriptionのいずれかが失敗した場合のログを確認します。故意にSecretや音声本文をログへ追加しないでください。
 
 期待:
 
+- Opus/FFmpeg capture pipelineがcommit前に失敗した場合、`input_audio_buffer.clear`で部分audioを破棄する
+- pipeline失敗はordered decision batchへ`suppress-response`として入り、先行Wakeが未分類の部分bufferを含むResponseを作らない
+- partial buffer clear自体に失敗した場合はvoice sessionを閉じ、安全性不明なbufferを後続発話へ持ち越さない
 - `input_audio_buffer.commit`へclient-generated `event_id`を付与する
 - server `error.error.event_id`がcommit event IDを返した場合、該当pending requestだけを失敗扱いにし後続requestを誤相関させない
 - Transcription failed eventのcommitted `item_id`を保持する
@@ -189,6 +192,7 @@ AI発話中:
 - [ ] Wake/delete/response判定がcommit順である
 - [ ] capture中に先行Responseを開始しない
 - [ ] back-to-back Wake発話で重複Responseを作らない
+- [ ] pipeline failure時にpartial input bufferをclearし、先行Responseを抑止する
 - [ ] commit errorをclient event IDで該当requestへ相関できる
 - [ ] ACK前timeout時にfail closedし、後続requestを誤相関させない
 - [ ] Transcription failure時にcommitted itemをcleanupできる
