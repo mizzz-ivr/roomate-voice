@@ -62,8 +62,11 @@ export function createAppendAudio(chunk: Buffer): RealtimeEvent {
   };
 }
 
-export function createCommitAudio(): RealtimeEvent {
-  return { type: 'input_audio_buffer.commit' };
+export function createCommitAudio(eventId?: string): RealtimeEvent {
+  return {
+    type: 'input_audio_buffer.commit',
+    ...(eventId ? { event_id: eventId } : {}),
+  };
 }
 
 export function createResponseRequest(): RealtimeEvent {
