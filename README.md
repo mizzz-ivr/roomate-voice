@@ -10,6 +10,9 @@ Discordのボイスチャンネルへ参加し、OpenAI Realtime APIを使って
 - Discord Voice Receiverからユーザー音声を取得
 - Opus 48kHz stereoからPCM16 24kHz monoへ変換
 - OpenAI Realtime APIへWebSocket接続
+- `gpt-transcribe`による入力文字起こし
+- Wake word / Alias一致時だけAI応答を生成
+- Wake word不一致の入力アイテムをRealtime会話履歴から削除
 - Realtime音声出力をDiscord用48kHz stereoへ変換して再生
 - ユーザー発話によるAI音声の割り込み停止
 - キャラクター名・性格・口調・呼びかけ語のInstructions生成
@@ -20,12 +23,12 @@ Discordのボイスチャンネルへ参加し、OpenAI Realtime APIを使って
 - GitHub Actionsによるテスト・ビルド・GHCR公開
 
 > [!IMPORTANT]
-> 初回実装は基盤フェーズです。Discord/OpenAIの実資格情報を用いたEnd-to-End音声疎通は、利用者のローカル環境で実施してください。API課金が発生するためCIでは実行しません。
+> Discord/OpenAIの実資格情報を用いたEnd-to-End音声疎通は、利用者のローカル環境で実施してください。API課金が発生するためCIでは実行しません。
 
 > [!WARNING]
-> 現時点の`BOT_WAKE_WORD`は会話Instructionsへ渡されるだけで、入力音声の前段フィルターではありません。VC内で最初に話したユーザーの音声がRealtime APIへ送信されます。テストは専用VCで行ってください。
+> Wake word判定はローカル音響モデルではなく、OpenAI Realtimeの入力文字起こしを利用します。Active Speakerの音声は判定前にAPIへ送信されます。Wake word不一致時はAI応答を生成せず、その入力アイテムをRealtime会話履歴から削除します。
 
-Windowsで初回テストを行う場合は、[WindowsローカルE2E音声テスト手順書](docs/windows-local-e2e-runbook.md)を上から順番に実施してください。
+Windowsで初回テストを行う場合は、[WindowsローカルE2E音声テスト手順書](docs/windows-local-e2e-runbook.md)を使用してください。
 
 ## 構成
 
@@ -36,7 +39,7 @@ roomate-voice/
 │  └─ dashboard/           # Vite/React管理画面（Vercel対応）
 ├─ packages/
 │  ├─ config/              # 環境変数検証
-│  ├─ core/                # Persona・Provider境界
+│  ├─ core/                # Persona・Wake word・Provider境界
 │  └─ openai-realtime/     # OpenAI Realtime WebSocket adapter
 ├─ infra/lightsail/        # Lightsail常駐用Compose/Systemd
 ├─ docs/                   # 設計・ローカル開発・配置手順
@@ -88,21 +91,25 @@ DISCORD_CLIENT_ID=
 DISCORD_GUILD_ID=
 OPENAI_API_KEY=
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1-mini
+OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
 OPENAI_VOICE=marin
 BOT_HTTP_PORT=3001
 BOT_PERSONA_NAME=RooMate
 BOT_PERSONA_STYLE=明るく親しみやすいゲーム仲間。返答は短くする。
 BOT_WAKE_WORD=ルーメイト
+BOT_WAKE_WORD_ALIASES=ルームメイト
 BOT_SILENCE_MS=900
 VITE_BOT_HEALTH_URL=http://localhost:3001/health
 ```
+
+`BOT_WAKE_WORD_ALIASES`はカンマ区切りで複数指定できます。音声認識で揺れやすい別表記を登録してください。
 
 ## Discordでの使い方
 
 1. BotをDiscordサーバーへ招待します。
 2. ユーザーがボイスチャンネルへ参加します。
 3. `/join`を実行します。
-4. Botへ話しかけます。
+4. `BOT_WAKE_WORD`またはAliasを含めてBotへ話しかけます。
 5. `/leave`で退出させます。
 
 Botに必要な権限は、View Channels、Connect、Speak、Use Application Commandsです。
@@ -144,7 +151,8 @@ npm run check          # typecheck + test + build
 - [x] 音声入出力パイプライン
 - [x] Vercel向けDashboard
 - [x] Lightsail常駐構成
-- [ ] Wake word判定
+- [x] Wake word判定（入力文字起こしベース）
+- [ ] ローカルWake word音響フィルター
 - [ ] Guildごとの設定保存
 - [ ] Discord OAuth / Supabase
 - [ ] 利用量・費用集計
