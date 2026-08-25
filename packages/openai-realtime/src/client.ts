@@ -189,7 +189,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
   private removePendingInputTranscription(pending: PendingInputTranscription): void {
     if (pending.timeout) {
       clearTimeout(pending.timeout);
-      pending.timeout = undefined;
+      delete pending.timeout;
     }
 
     const index = this.pendingInputTranscriptions.indexOf(pending);
