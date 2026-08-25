@@ -75,7 +75,7 @@ export class BotRuntimeController {
         if (message) this.lastError = message.slice(-2_000);
       });
       child.once('exit', (code, signal) => {
-        this.child = undefined;
+        if (this.child === child) this.child = undefined;
         this.stopHealthPolling();
         this.health = undefined;
 
@@ -124,19 +124,27 @@ export class BotRuntimeController {
     this.emit();
 
     await new Promise<void>((resolve) => {
-      let settled = false;
-      const done = () => {
-        if (settled) return;
-        settled = true;
+      let forceTimer: ReturnType<typeof setTimeout> | undefined;
+      const onExit = () => {
+        if (forceTimer) clearTimeout(forceTimer);
         resolve();
       };
 
-      child.once('exit', done);
+      child.once('exit', onExit);
+
+      if (child.exitCode !== null || child.signalCode !== null) {
+        child.off('exit', onExit);
+        resolve();
+        return;
+      }
+
       child.kill();
-      setTimeout(() => {
-        if (this.child === child) child.kill('SIGKILL');
-        done();
-      }, 5_000).unref();
+      forceTimer = setTimeout(() => {
+        if (this.child === child && child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGKILL');
+        }
+      }, 5_000);
+      forceTimer.unref();
     });
 
     return this.snapshot();
@@ -184,7 +192,7 @@ export class BotRuntimeController {
       const response = await fetch(HEALTH_URL, {
         signal: AbortSignal.timeout(1_500),
       });
-      if (!response.ok) return;
+      if (!response.ok && response.status !== 503) return;
 
       this.health = (await response.json()) as BotHealthSnapshot;
       this.emit();
