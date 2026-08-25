@@ -131,22 +131,34 @@ Invoke-RestMethod http://localhost:3001/health | ConvertTo-Json
 - 同じdecision batch内に複数のWake発話がある場合、未分類itemを含んだ重複Responseを生成せず、batch drain後に1回だけResponseを作成する
 - 次の発話全体を取りこぼさない
 
-## 9. Pipeline / Commit / Transcription failure cleanup
+## 9. Pipeline / Clear / Commit / Transcription failure cleanup
 
-Capture pipeline、Commit、Transcriptionのいずれかが失敗した場合のログを確認します。故意にSecretや音声本文をログへ追加しないでください。
+Capture pipeline、Input buffer clear、Commit、Transcriptionのいずれかが失敗した場合のログを確認します。故意にSecretや音声本文をログへ追加しないでください。
 
 期待:
 
 - Opus/FFmpeg capture pipelineがcommit前に失敗した場合、`input_audio_buffer.clear`で部分audioを破棄する
 - pipeline失敗はordered decision batchへ`suppress-response`として入り、先行Wakeが未分類の部分bufferを含むResponseを作らない
-- partial buffer clear自体に失敗した場合はvoice sessionを閉じ、安全性不明なbufferを後続発話へ持ち越さない
+- `input_audio_buffer.clear`はclient-generated `event_id`を付けて送信する
+- send成功だけではclear成功扱いにせず、server `input_audio_buffer.cleared`を受信して初めて成功とする
+- clear ACK待ち中はspeaker capture lease / active capture holdを維持し、新しいcaptureを同じRealtime input bufferへ追加しない
+- server `error.error.event_id`がclear event IDを返した場合、該当clear待ちPromiseをrejectする
+- clear ACKがtimeoutした場合も成功扱いにしない
+- clear reject / ACK timeout時はvoice sessionを閉じ、安全性不明なbufferを後続発話へ持ち越さない
+- clear成功時だけcapture holdを解放してsessionを継続する
 - `input_audio_buffer.commit`へclient-generated `event_id`を付与する
 - server `error.error.event_id`がcommit event IDを返した場合、該当pending requestだけを失敗扱いにし後続requestを誤相関させない
 - Transcription failed eventのcommitted `item_id`を保持する
 - Bot側が当該itemへ`conversation.item.delete`を試行する
-- ACK受信前にtimeoutし相関安全性を保証できなくなった場合はfail closedとし、queueを継続利用せずRealtime socketを閉じる
+- Commit ACK受信前にtimeoutし相関安全性を保証できなくなった場合はfail closedとし、queueを継続利用せずRealtime socketを閉じる
 - Realtime切断時はDiscord voice sessionも終了し、後続発話を汚染済みsessionで処理し続けない
 - 再開は`/join`で新しいRealtime sessionを作成して行う
+
+Unit Testでは少なくとも以下を保証します。
+
+- clear Promiseは`input_audio_buffer.cleared`前にresolveしない
+- clear server errorはclient event IDで該当requestへ相関する
+- clear ACK欠落時はtimeout rejectする
 
 ## 10. Barge-in
 
@@ -193,8 +205,12 @@ AI発話中:
 - [ ] capture中に先行Responseを開始しない
 - [ ] back-to-back Wake発話で重複Responseを作らない
 - [ ] pipeline failure時にpartial input bufferをclearし、先行Responseを抑止する
+- [ ] clear成功判定がserver `input_audio_buffer.cleared` ACK受信後だけである
+- [ ] clear rejectをclient event IDで相関できる
+- [ ] clear ACK timeout時にsessionをfail closedできる
+- [ ] clear ACK待ち中にcapture holdを解放しない
 - [ ] commit errorをclient event IDで該当requestへ相関できる
-- [ ] ACK前timeout時にfail closedし、後続requestを誤相関させない
+- [ ] Commit ACK前timeout時にfail closedし、後続requestを誤相関させない
 - [ ] Transcription failure時にcommitted itemをcleanupできる
 - [ ] barge-in 5回中4回以上成功
 - [ ] `/leave`成功
