@@ -1,19 +1,25 @@
+export interface SpeakerCaptureLease {
+  readonly userId: string;
+}
+
 export class SpeakerCaptureLock {
-  private activeSpeakerIdValue: string | undefined;
+  private activeLease: SpeakerCaptureLease | undefined;
 
   public get activeSpeakerId(): string | undefined {
-    return this.activeSpeakerIdValue;
+    return this.activeLease?.userId;
   }
 
-  public tryAcquire(userId: string): boolean {
-    if (this.activeSpeakerIdValue) return false;
-    this.activeSpeakerIdValue = userId;
-    return true;
+  public tryAcquire(userId: string): SpeakerCaptureLease | undefined {
+    if (this.activeLease) return undefined;
+
+    const lease: SpeakerCaptureLease = { userId };
+    this.activeLease = lease;
+    return lease;
   }
 
-  public release(userId: string): void {
-    if (this.activeSpeakerIdValue === userId) {
-      this.activeSpeakerIdValue = undefined;
+  public release(lease: SpeakerCaptureLease): void {
+    if (this.activeLease === lease) {
+      this.activeLease = undefined;
     }
   }
 }
