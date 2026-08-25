@@ -5,7 +5,7 @@
   "type": "module",
   "description": "RooMate Voice desktop app for non-technical Windows users",
   "author": "ivRooom / mizzz-ivr",
-  "main": "dist/main/main.js",
+  "main": "dist/main/main/main.js",
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "dev": "concurrently -k -n renderer,main,electron \"npm run dev:renderer\" \"npm run dev:main\" \"npm run dev:electron\"",
