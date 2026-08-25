@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { createAppendAudio, createSessionUpdate } from '../src/index.js';
+import {
+  createAppendAudio,
+  createDeleteConversationItem,
+  createSessionUpdate,
+} from '../src/index.js';
 
 describe('realtime protocol', () => {
-  it('creates a current realtime session update', () => {
+  it('creates a current realtime session update with input transcription', () => {
     const event = createSessionUpdate({
       model: 'gpt-realtime-2.1-mini',
       voice: 'marin',
       instructions: '短く話す',
+      inputTranscription: {
+        model: 'gpt-transcribe',
+        prompt: '呼びかけ語候補: ルーメイト、ルームメイト',
+      },
     });
 
     expect(event.type).toBe('session.update');
@@ -15,7 +23,13 @@ describe('realtime protocol', () => {
         model: 'gpt-realtime-2.1-mini',
         output_modalities: ['audio'],
         audio: {
-          input: { format: { rate: 24_000 } },
+          input: {
+            format: { rate: 24_000 },
+            transcription: {
+              model: 'gpt-transcribe',
+              prompt: '呼びかけ語候補: ルーメイト、ルームメイト',
+            },
+          },
           output: { voice: 'marin' },
         },
       },
@@ -25,5 +39,12 @@ describe('realtime protocol', () => {
   it('encodes PCM bytes as base64', () => {
     const event = createAppendAudio(Buffer.from([1, 2, 3]));
     expect(event.audio).toBe('AQID');
+  });
+
+  it('creates a conversation item delete event', () => {
+    expect(createDeleteConversationItem('item_123')).toEqual({
+      type: 'conversation.item.delete',
+      item_id: 'item_123',
+    });
   });
 });
