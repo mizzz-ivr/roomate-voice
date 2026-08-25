@@ -70,4 +70,44 @@ describe('OpenAIRealtimeClient input transcription correlation', () => {
       }),
     );
   });
+
+  it('keeps a timed-out unacknowledged commit as a FIFO tombstone', async () => {
+    vi.useFakeTimers();
+
+    try {
+      const client = createClient();
+      const commitSpy = vi.spyOn(client, 'commitAudio').mockImplementation(() => undefined);
+      const deleteSpy = vi.spyOn(client, 'deleteConversationItem').mockImplementation(() => undefined);
+
+      const first = client.commitAudioAndWaitForTranscript(50);
+      const firstRejection = expect(first).rejects.toEqual(
+        expect.objectContaining<InputAudioTranscriptionError>({
+          name: 'InputAudioTranscriptionError',
+          message: 'Realtime input transcription timed out after 50ms',
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(50);
+      await firstRejection;
+
+      const second = client.commitAudioAndWaitForTranscript();
+      expect(commitSpy).toHaveBeenCalledTimes(2);
+
+      // The first ACK arrives late. It must consume the timed-out slot instead of being assigned
+      // to the second request, and its conversation item is cleaned up immediately.
+      emitServerEvent(client, { type: 'input_audio_buffer.committed', item_id: 'late-item-a' });
+      expect(deleteSpy).toHaveBeenCalledWith('late-item-a');
+
+      emitServerEvent(client, { type: 'input_audio_buffer.committed', item_id: 'item-b' });
+      emitServerEvent(client, {
+        type: 'conversation.item.input_audio_transcription.completed',
+        item_id: 'item-b',
+        transcript: 'second transcript',
+      });
+
+      await expect(second).resolves.toEqual({ itemId: 'item-b', transcript: 'second transcript' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
