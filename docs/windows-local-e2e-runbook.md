@@ -14,6 +14,12 @@ Windows PC上でRooMate Voiceを起動し、Discord VC + OpenAI Realtime APIの�
 - AI発話中のbarge-inはWake wordなしでも応答対象とする
 - 文字起こし本文は通常ログへ保存しない
 - 音声capture lockはTranscription待ちとは分離し、Transcription latency中の次発話を取りこぼさない
+- speaker capture lockは取得ごとのlease identityで管理する
+- pending Transcriptionのitem ID相関とWake/delete/response判定はcommit順で処理する
+- 新しいaudio captureが進行中は先行batchの`response.create`を保留する
+- 同一decision batchの複数Wake発話はbatch drain後に1回のResponseへまとめ、重複Responseを避ける
+- `input_audio_buffer.commit`へclient event IDを付与し、commit errorを該当requestへ相関する
+- ACK前timeoutで相関安全性を失った場合はfail closedし、Realtime socketとDiscord voice sessionを終了する
 - 同時発話の完全処理は未対応。1つの音声capture中は別speakerの開始を受け付けない
 - Wake word判定前のActive Speaker音声はOpenAI APIへ送信される。ローカル音響Wake word filterではない
 
@@ -82,7 +88,14 @@ cd roomate-voice
 git switch main
 ```
 
-未マージfix PRを検証する場合は、`git fetch origin`後にPRのhead branchへ切り替えます。
+PR #5をmainへマージする前の実VC確認では:
+
+```powershell
+git fetch origin
+git switch fix/voice-production-readiness-follow-up
+git pull --ff-only origin fix/voice-production-readiness-follow-up
+git status
+```
 
 ## 5. `.env`作成
 
@@ -119,7 +132,7 @@ LOG_LEVEL=debug
 VITE_BOT_HEALTH_URL=http://localhost:3001/health
 ```
 
-Secret値はPC上でのみ入力します。
+Secret値はPC上でのみ入力します。OpenAI API Keyが既に保存済みなら、その値をChatへ再掲せずPC上の`.env`へ設定してください。
 
 ```powershell
 git status --short
@@ -244,15 +257,30 @@ AI発話中:
 - Wake wordなしでも新しい発話へ応答
 - 5回中4回以上成功を目標
 
-### Transcription latency race
+### Transcription latency / commit-order race
 
-Wake word発話を終えた直後、最初のTranscription結果を待たずに次の発話を開始します。複数回行い、次の発話全体が取りこぼされないことを確認します。
+最初の発話を終えた直後、Transcription結果を待たずに次の発話を開始します。Wake wordなし→Wake word、Wake word→Wake wordを複数回試します。
 
 期待:
 
 - 次の `speaking.start` がTranscription待ちだけを理由に無視されない
+- 同一ユーザーが続けて話しても古いcleanupで新しいcapture leaseが外れない
 - committed itemとTranscription結果が別発話へ誤相関しない
-- Transcription失敗時、committed itemが会話履歴に残り続けない
+- Transcription結果が逆順に完了してもWake/delete/response判定はcommit順になる
+- 後続capture中に先行Responseを開始してユーザー音声へ被せない
+- back-to-back Wake発話で重複Responseを生成しない
+
+### Commit / Transcription failure
+
+通常E2E中に故意にSecretや音声本文をログへ出力しないでください。
+
+期待:
+
+- commit errorが発生した場合、client event IDで該当pending requestだけを失敗扱いにする
+- Transcription失敗時、committed item IDを保持して`conversation.item.delete`を試行する
+- ACK前timeoutが発生した場合は相関queueを使い続けずfail closedする
+- fail closed時はRealtime切断後にDiscord voice sessionも終了する
+- 再開時は`/join`で新しいRealtime sessionを作成する
 
 ## 9. 終了
 
@@ -298,6 +326,10 @@ docker compose down
 - [ ] Aliasで応答
 - [ ] 非Wake発話が履歴へ残らない
 - [ ] Transcription latency中の次発話を取りこぼさない
+- [ ] commit順でWake/delete/response判定する
+- [ ] back-to-back Wake発話で重複Responseを作らない
+- [ ] commit errorをclient event IDで相関できる
+- [ ] ACK前timeout時にfail closedする
 - [ ] Transcription failure時にcommitted itemをcleanupできる
 - [ ] barge-in 5回中4回以上成功
 - [ ] `/leave`後 `activeVoiceSessions=0`
