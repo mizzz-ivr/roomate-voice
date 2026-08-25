@@ -33,6 +33,7 @@ export interface RealtimeClientEvents {
   audioDelta: [chunk: Buffer];
   audioDone: [];
   transcriptDelta: [delta: string];
+  inputAudioCommitted: [itemId: string];
   inputTranscriptCompleted: [itemId: string, transcript: string];
   inputTranscriptFailed: [itemId: string | undefined, error: Error];
   responseDone: [usage?: RealtimeUsage];
@@ -101,11 +102,19 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
   public async commitAudioAndWaitForTranscript(timeoutMs = 15_000): Promise<InputAudioTranscript> {
     return new Promise<InputAudioTranscript>((resolve, reject) => {
+      let expectedItemId: string | undefined;
+
+      const onCommitted = (itemId: string) => {
+        expectedItemId = itemId;
+      };
       const onCompleted = (itemId: string, transcript: string) => {
+        if (!expectedItemId || itemId !== expectedItemId) return;
         cleanup();
         resolve({ itemId, transcript });
       };
-      const onFailed = (_itemId: string | undefined, error: Error) => {
+      const onFailed = (itemId: string | undefined, error: Error) => {
+        if (!expectedItemId) return;
+        if (itemId && itemId !== expectedItemId) return;
         cleanup();
         reject(error);
       };
@@ -117,12 +126,14 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
       const cleanup = () => {
         clearTimeout(timeout);
+        this.removeListener('inputAudioCommitted', onCommitted);
         this.removeListener('inputTranscriptCompleted', onCompleted);
         this.removeListener('inputTranscriptFailed', onFailed);
       };
 
-      this.once('inputTranscriptCompleted', onCompleted);
-      this.once('inputTranscriptFailed', onFailed);
+      this.on('inputAudioCommitted', onCommitted);
+      this.on('inputTranscriptCompleted', onCompleted);
+      this.on('inputTranscriptFailed', onFailed);
 
       try {
         this.commitAudio();
@@ -192,6 +203,12 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
       ) {
         const delta = event.delta;
         if (typeof delta === 'string') this.emit('transcriptDelta', delta);
+        return;
+      }
+
+      if (event.type === 'input_audio_buffer.committed') {
+        const itemId = event.item_id;
+        if (typeof itemId === 'string') this.emit('inputAudioCommitted', itemId);
         return;
       }
 
