@@ -6,13 +6,13 @@ Wake word文字起こしゲートとproduction-readiness修正を、Windows + Di
 
 ## 1. 対象branch
 
-通常は最新`main`を使用します。未マージのproduction-readiness fixを確認する場合は対象PRのhead branchへ切り替えます。
+通常は最新`main`を使用します。PR #5をmainへマージする前のproduction-readiness確認ではPR headを使用します。
 
 ```powershell
 cd $HOME\src\roomate-voice
 git fetch origin
-git switch main
-git pull --ff-only origin main
+git switch fix/voice-production-readiness-follow-up
+git pull --ff-only origin fix/voice-production-readiness-follow-up
 git status --short
 ```
 
@@ -117,26 +117,33 @@ Invoke-RestMethod http://localhost:3001/health | ConvertTo-Json
 - 2つ目だけ応答
 - 1つ目のcommitted itemはRealtime会話履歴から削除される
 
-## 8. Transcription latency race
+## 8. Transcription latency / commit-order race
 
-最初の発話の音声captureが終わった直後、Transcription結果を待たずに次の発話を開始します。
+最初の発話の音声captureが終わった直後、Transcription結果を待たずに次の発話を開始します。Wake wordなし→Wake word、Wake word→Wake wordの両方を複数回確認します。
 
 期待:
 
 - capture終了後はspeaker lockが解放されており、次の`receiver.speaking.start`を受け付ける
 - 先行発話の遅延cleanupが後続発話のcapture lockを解除しない
 - 複数のpending Transcriptionがあっても、`input_audio_buffer.committed`のitem IDと結果が正しい発話へ相関する
+- Transcription結果の到着順にかかわらず、Wake/delete/response判定はcommit順に処理する
+- 新しいaudio captureが継続中は`response.create`を開始しない
+- 同じdecision batch内に複数のWake発話がある場合、未分類itemを含んだ重複Responseを生成せず、batch drain後に1回だけResponseを作成する
 - 次の発話全体を取りこぼさない
 
-## 9. Transcription failure cleanup
+## 9. Commit / Transcription failure cleanup
 
-Transcription failureが発生した場合のログを確認します。故意にSecretや音声本文をログへ追加しないでください。
+Commit failureまたはTranscription failureが発生した場合のログを確認します。故意にSecretや音声本文をログへ追加しないでください。
 
 期待:
 
-- failed eventのcommitted `item_id`を保持する
+- `input_audio_buffer.commit`へclient-generated `event_id`を付与する
+- server `error.error.event_id`がcommit event IDを返した場合、該当pending requestだけを失敗扱いにし後続requestを誤相関させない
+- Transcription failed eventのcommitted `item_id`を保持する
 - Bot側が当該itemへ`conversation.item.delete`を試行する
-- 失敗した入力が後続Wake word応答の会話履歴として残り続けない
+- ACK受信前にtimeoutし相関安全性を保証できなくなった場合はfail closedとし、queueを継続利用せずRealtime socketを閉じる
+- Realtime切断時はDiscord voice sessionも終了し、後続発話を汚染済みsessionで処理し続けない
+- 再開は`/join`で新しいRealtime sessionを作成して行う
 
 ## 10. Barge-in
 
@@ -179,6 +186,11 @@ AI発話中:
 - [ ] 非Wake発話がRealtime会話履歴へ残らない
 - [ ] Transcription latency中の次発話を取りこぼさない
 - [ ] Concurrent transcriptionのitem ID相関が崩れない
+- [ ] Wake/delete/response判定がcommit順である
+- [ ] capture中に先行Responseを開始しない
+- [ ] back-to-back Wake発話で重複Responseを作らない
+- [ ] commit errorをclient event IDで該当requestへ相関できる
+- [ ] ACK前timeout時にfail closedし、後続requestを誤相関させない
 - [ ] Transcription failure時にcommitted itemをcleanupできる
 - [ ] barge-in 5回中4回以上成功
 - [ ] `/leave`成功
