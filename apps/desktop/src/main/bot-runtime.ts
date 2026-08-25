@@ -182,7 +182,6 @@ export class BotRuntimeController {
 
     try {
       const response = await fetch(HEALTH_URL, {
-        cache: 'no-store',
         signal: AbortSignal.timeout(1_500),
       });
       if (!response.ok) return;
