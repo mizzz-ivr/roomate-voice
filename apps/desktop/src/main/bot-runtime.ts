@@ -156,7 +156,7 @@ export class BotRuntimeController {
     if (override && existsSync(override)) return override;
 
     const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
-    const developmentEntry = path.resolve(currentDirectory, '../../../bot/dist/index.js');
+    const developmentEntry = path.resolve(currentDirectory, '../../../../bot/dist/index.js');
     if (existsSync(developmentEntry)) return developmentEntry;
 
     const packagedEntry = path.join(process.resourcesPath, 'worker', 'index.js');
