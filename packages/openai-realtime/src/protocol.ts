@@ -69,6 +69,13 @@ export function createCommitAudio(eventId?: string): RealtimeEvent {
   };
 }
 
+export function createClearAudio(eventId?: string): RealtimeEvent {
+  return {
+    type: 'input_audio_buffer.clear',
+    ...(eventId ? { event_id: eventId } : {}),
+  };
+}
+
 export function createResponseRequest(): RealtimeEvent {
   return { type: 'response.create' };
 }
