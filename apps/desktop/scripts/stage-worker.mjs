@@ -29,7 +29,17 @@ function collectExternalDependencies(manifests) {
 }
 
 function installProductionDependencies() {
-  const args = ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'];
+  // prism-media declares an older optional opusscript peer range while the tested root workspace
+  // intentionally uses opusscript 0.1.x. Staging should mirror that already-working graph rather
+  // than silently downgrade the runtime codec dependency.
+  const args = [
+    'install',
+    '--omit=dev',
+    '--ignore-scripts',
+    '--legacy-peer-deps',
+    '--no-audit',
+    '--no-fund',
+  ];
 
   if (process.platform === 'win32') {
     execFileSync(
