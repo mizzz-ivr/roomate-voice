@@ -31,20 +31,19 @@ export class InputAudioTranscriptionError extends Error {
   public constructor(
     message: string,
     public readonly itemId?: string,
+    public readonly correlationLost = false,
   ) {
     super(message);
     this.name = 'InputAudioTranscriptionError';
   }
 }
 
-type PendingInputTranscriptionState = 'pending' | 'timed-out-awaiting-commit';
-
 interface PendingInputTranscription {
+  commitEventId: string;
   itemId?: string;
   resolve: (value: InputAudioTranscript) => void;
   reject: (reason: Error) => void;
   timeout?: ReturnType<typeof setTimeout>;
-  state: PendingInputTranscriptionState;
 }
 
 export interface RealtimeClientEvents {
@@ -65,6 +64,8 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
   private socket: WebSocket | undefined;
   private readonly options: OpenAIRealtimeClientOptions;
   private readonly pendingInputTranscriptions: PendingInputTranscription[] = [];
+  private inputCorrelationHealthy = true;
+  private clientEventSequence = 0;
 
   public constructor(options: OpenAIRealtimeClientOptions) {
     super();
@@ -76,6 +77,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
       return;
     }
 
+    this.inputCorrelationHealthy = true;
     const endpoint = this.options.endpoint ?? 'wss://api.openai.com/v1/realtime';
     const url = new URL(endpoint);
     url.searchParams.set('model', this.options.model);
@@ -104,6 +106,9 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
       socket.once('open', onOpen);
       socket.on('message', (data) => this.handleMessage(data));
       socket.on('close', (code, reason) => {
+        if (this.socket === socket) {
+          this.socket = undefined;
+        }
         this.rejectPendingInputTranscriptions(`Realtime socket closed (${code})`);
         this.emit('disconnected', code, reason.toString());
       });
@@ -118,16 +123,24 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     this.send(createAppendAudio(chunk));
   }
 
-  public commitAudio(): void {
-    this.send(createCommitAudio());
+  public commitAudio(eventId?: string): void {
+    this.send(createCommitAudio(eventId));
   }
 
   public async commitAudioAndWaitForTranscript(timeoutMs = 15_000): Promise<InputAudioTranscript> {
+    if (!this.inputCorrelationHealthy) {
+      throw new InputAudioTranscriptionError(
+        'Realtime input correlation is unavailable; reconnect the voice session before committing more audio',
+        undefined,
+        true,
+      );
+    }
+
     return new Promise<InputAudioTranscript>((resolve, reject) => {
       const pending: PendingInputTranscription = {
+        commitEventId: this.createClientEventId('commit'),
         resolve,
         reject,
-        state: 'pending',
       };
 
       pending.timeout = setTimeout(() => {
@@ -135,18 +148,18 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
         if (committedItemId) {
           this.removePendingInputTranscription(pending);
-        } else {
-          // Keep an unacknowledged timed-out commit as a FIFO tombstone. A delayed commit ACK must
-          // consume this slot rather than being reassigned to a newer utterance.
-          this.clearPendingInputTranscriptionTimeout(pending);
-          pending.state = 'timed-out-awaiting-commit';
+          reject(
+            new InputAudioTranscriptionError(
+              `Realtime input transcription timed out after ${timeoutMs}ms`,
+              committedItemId,
+            ),
+          );
+          return;
         }
 
-        reject(
-          new InputAudioTranscriptionError(
-            `Realtime input transcription timed out after ${timeoutMs}ms`,
-            committedItemId,
-          ),
+        this.invalidateInputCorrelation(
+          pending,
+          `Realtime input commit acknowledgement timed out after ${timeoutMs}ms`,
         );
       }, timeoutMs);
       pending.timeout.unref();
@@ -154,7 +167,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
       this.pendingInputTranscriptions.push(pending);
 
       try {
-        this.commitAudio();
+        this.commitAudio(pending.commitEventId);
       } catch (error) {
         this.removePendingInputTranscription(pending);
         reject(error instanceof Error ? error : new Error(String(error)));
@@ -193,6 +206,11 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     });
   }
 
+  private createClientEventId(kind: string): string {
+    this.clientEventSequence += 1;
+    return `roomate_${kind}_${Date.now().toString(36)}_${this.clientEventSequence.toString(36)}`;
+  }
+
   private send(event: RealtimeEvent): void {
     if (this.socket?.readyState !== WebSocket.OPEN) {
       throw new Error(`Realtime socket is not open; cannot send ${event.type}`);
@@ -216,33 +234,63 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
     }
   }
 
-  private assignCommittedItem(itemId: string): void {
-    const pending = this.pendingInputTranscriptions.find((request) => !request.itemId);
-    if (!pending) return;
+  private invalidateInputCorrelation(
+    timedOutRequest: PendingInputTranscription,
+    timeoutMessage: string,
+  ): void {
+    if (!this.inputCorrelationHealthy) return;
 
-    pending.itemId = itemId;
+    this.inputCorrelationHealthy = false;
+    const pendingRequests = [...this.pendingInputTranscriptions];
+    this.pendingInputTranscriptions.length = 0;
 
-    if (pending.state === 'timed-out-awaiting-commit') {
-      // This ACK belongs to a Promise that already timed out. Consume its FIFO slot and remove the
-      // committed conversation item so neither the ACK nor the ignored audio can leak into a newer turn.
-      this.removePendingInputTranscription(pending);
-      try {
-        this.deleteConversationItem(itemId);
-      } catch (error) {
-        this.emit(
-          'realtimeError',
-          error instanceof Error
-            ? error
-            : new Error('Failed to delete realtime item after delayed commit acknowledgement'),
-        );
+    for (const pending of pendingRequests) {
+      this.clearPendingInputTranscriptionTimeout(pending);
+      const message =
+        pending === timedOutRequest
+          ? timeoutMessage
+          : 'Realtime input correlation was invalidated by an unacknowledged commit timeout';
+      pending.reject(new InputAudioTranscriptionError(message, pending.itemId, true));
+    }
+
+    this.emit(
+      'realtimeError',
+      new InputAudioTranscriptionError(
+        'Realtime input correlation lost; closing the socket to prevent later commit acknowledgements from being assigned to newer utterances',
+        undefined,
+        true,
+      ),
+    );
+
+    const socket = this.socket;
+    if (socket && socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) {
+      if (this.socket === socket) {
+        this.socket = undefined;
       }
+      socket.close(1011, 'input correlation lost');
     }
   }
 
-  private resolveInputTranscription(itemId: string, transcript: string): void {
+  private assignCommittedItem(itemId: string): void {
+    const pending = this.pendingInputTranscriptions.find((request) => !request.itemId);
+    if (pending) {
+      pending.itemId = itemId;
+    }
+  }
+
+  private rejectCommitEvent(clientEventId: string, error: Error): boolean {
     const pending = this.pendingInputTranscriptions.find(
-      (request) => request.state === 'pending' && request.itemId === itemId,
+      (request) => request.commitEventId === clientEventId && !request.itemId,
     );
+    if (!pending) return false;
+
+    this.removePendingInputTranscription(pending);
+    pending.reject(new InputAudioTranscriptionError(error.message));
+    return true;
+  }
+
+  private resolveInputTranscription(itemId: string, transcript: string): void {
+    const pending = this.pendingInputTranscriptions.find((request) => request.itemId === itemId);
     if (!pending) return;
 
     this.removePendingInputTranscription(pending);
@@ -251,12 +299,8 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
   private rejectInputTranscription(itemId: string | undefined, error: Error): void {
     const pending = itemId
-      ? this.pendingInputTranscriptions.find(
-          (request) => request.state === 'pending' && request.itemId === itemId,
-        )
-      : this.pendingInputTranscriptions.find(
-          (request) => request.state === 'pending' && Boolean(request.itemId),
-        );
+      ? this.pendingInputTranscriptions.find((request) => request.itemId === itemId)
+      : this.pendingInputTranscriptions.find((request) => request.itemId);
     if (!pending) return;
 
     const committedItemId = pending.itemId ?? itemId;
@@ -270,9 +314,7 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
 
     for (const pending of pendingRequests) {
       this.clearPendingInputTranscriptionTimeout(pending);
-      if (pending.state === 'pending') {
-        pending.reject(new InputAudioTranscriptionError(message, pending.itemId));
-      }
+      pending.reject(new InputAudioTranscriptionError(message, pending.itemId));
     }
   }
 
@@ -338,9 +380,14 @@ export class OpenAIRealtimeClient extends EventEmitter<RealtimeClientEvents> {
       }
 
       if (event.type === 'error') {
-        const details = event.error as { message?: unknown } | undefined;
+        const details = event.error as { message?: unknown; event_id?: unknown } | undefined;
         const message = typeof details?.message === 'string' ? details.message : 'Unknown realtime error';
-        this.emit('realtimeError', new Error(message));
+        const error = new Error(message);
+        const clientEventId = typeof details?.event_id === 'string' ? details.event_id : undefined;
+        if (clientEventId) {
+          this.rejectCommitEvent(clientEventId, error);
+        }
+        this.emit('realtimeError', error);
       }
     } catch (error) {
       this.emit(
