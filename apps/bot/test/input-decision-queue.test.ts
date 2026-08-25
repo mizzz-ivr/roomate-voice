@@ -68,6 +68,33 @@ describe('InputDecisionQueue', () => {
     expect(events).toEqual(['wake', 'non-wake', 'response']);
   });
 
+  it('suppresses an earlier wake response when the newer capture pipeline fails', async () => {
+    const events: string[] = [];
+    const queue = new InputDecisionQueue({
+      onResponseReady: () => events.push('response'),
+    });
+
+    queue.beginCapture();
+    queue.enqueue(async () => {
+      events.push('wake');
+      return 'respond';
+    });
+
+    await queue.waitForIdle();
+    expect(events).toEqual(['wake']);
+
+    // A failed capture still occupies its position in the ordered batch and must suppress the
+    // earlier response before the capture hold is released.
+    queue.enqueue(async () => {
+      events.push('pipeline-failed');
+      return 'suppress-response';
+    });
+    queue.endCapture();
+    await queue.waitForIdle();
+
+    expect(events).toEqual(['wake', 'pipeline-failed']);
+  });
+
   it('suppresses a pending response when correlation safety is lost', async () => {
     const events: string[] = [];
     const queue = new InputDecisionQueue({
