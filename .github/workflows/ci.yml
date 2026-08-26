@@ -44,13 +44,17 @@ jobs:
         run: npm run typecheck -w @roomate-voice/desktop
       - name: Build Windows Setup.exe
         run: npm run desktop:make:win
-      - name: Verify packaged Voice Worker and installer naming
+      - name: Verify packaged Voice Worker, bundled FFmpeg and installer naming
         shell: pwsh
         run: |
           $version = node -p "require('./apps/desktop/package.json').version"
+          $ffmpeg = 'apps/desktop/release/win-unpacked/resources/worker/ffmpeg/ffmpeg.exe'
           $required = @(
             "apps/desktop/release/rmv_Setup_version$version.exe",
+            'apps/desktop/release/win-unpacked/resources/THIRD_PARTY_NOTICES.md',
             'apps/desktop/release/win-unpacked/resources/worker/index.js',
+            $ffmpeg,
+            'apps/desktop/release/win-unpacked/resources/worker/ffmpeg/ffmpeg-static-LICENSE',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/package.json',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/dist/index.js',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/core/package.json',
@@ -62,6 +66,10 @@ jobs:
             if (-not (Test-Path $path)) {
               throw "Required Windows package resource is missing: $path"
             }
+          }
+          & $ffmpeg -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Bundled FFmpeg failed to execute with exit code $LASTEXITCODE"
           }
       - name: Upload Windows installer smoke artifact
         uses: actions/upload-artifact@v4
