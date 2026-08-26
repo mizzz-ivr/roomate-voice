@@ -54,13 +54,10 @@ export class BotRuntimeController {
         botEnvironment.OPENAI_API_KEY,
       ].filter((value): value is string => Boolean(value));
 
+      const workerEnvironment = this.buildWorkerEnvironment(workerEntry, botEnvironment);
       const child = spawn(process.execPath, [workerEntry], {
         cwd: path.dirname(workerEntry),
-        env: {
-          ...process.env,
-          ...botEnvironment,
-          ELECTRON_RUN_AS_NODE: '1',
-        },
+        env: workerEnvironment,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -166,6 +163,34 @@ export class BotRuntimeController {
     if (existsSync(packagedEntry)) return packagedEntry;
 
     return undefined;
+  }
+
+  private buildWorkerEnvironment(
+    workerEntry: string,
+    botEnvironment: NodeJS.ProcessEnv,
+  ): NodeJS.ProcessEnv {
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...botEnvironment,
+      ELECTRON_RUN_AS_NODE: '1',
+    };
+
+    const executableName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    const ffmpegDirectory = path.join(path.dirname(workerEntry), 'ffmpeg');
+    const bundledFfmpeg = path.join(ffmpegDirectory, executableName);
+    const packagedWorker = workerEntry.startsWith(path.join(process.resourcesPath, 'worker'));
+
+    if (packagedWorker && !existsSync(bundledFfmpeg)) {
+      throw new Error('Bundled FFmpegが見つかりません。RooMate Voiceを再インストールしてください。');
+    }
+
+    if (existsSync(bundledFfmpeg)) {
+      const pathKey = Object.keys(environment).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+      const inheritedPath = environment[pathKey] ?? '';
+      environment[pathKey] = [ffmpegDirectory, inheritedPath].filter(Boolean).join(path.delimiter);
+    }
+
+    return environment;
   }
 
   private startHealthPolling(): void {
