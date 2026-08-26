@@ -91,9 +91,11 @@ jobs:
               throw "Required release resource is missing: $path"
             }
           }
-          & $ffmpeg -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) {
-            throw "Bundled FFmpeg failed to execute with exit code $LASTEXITCODE"
+
+          & $ffmpeg -version
+          $ffmpegExitCode = $LASTEXITCODE
+          if ($ffmpegExitCode -ne 0) {
+            throw "Bundled FFmpeg failed to execute with exit code $ffmpegExitCode"
           }
 
       - name: Create GitHub pre-release
