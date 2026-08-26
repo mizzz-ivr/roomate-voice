@@ -8,3 +8,5 @@ coverage/
 .vscode/
 .idea/
 apps/dashboard/.vercel/
+apps/desktop/release/
+apps/desktop/worker-stage/

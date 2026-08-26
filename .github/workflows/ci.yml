@@ -30,3 +30,51 @@ jobs:
         run: docker build --file apps/bot/Dockerfile --tag roomate-voice-bot:test .
       - name: Build Dashboard container
         run: docker build --file apps/dashboard/Dockerfile --tag roomate-voice-dashboard:test .
+
+  desktop-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Typecheck desktop
+        run: npm run typecheck -w @roomate-voice/desktop
+      - name: Build Windows Setup.exe
+        run: npm run desktop:make:win
+      - name: Verify packaged Voice Worker, bundled FFmpeg and installer naming
+        shell: pwsh
+        run: |
+          $version = node -p "require('./apps/desktop/package.json').version"
+          $ffmpeg = 'apps/desktop/release/win-unpacked/resources/worker/ffmpeg/ffmpeg.exe'
+          $required = @(
+            "apps/desktop/release/rmv_Setup_version$version.exe",
+            'apps/desktop/release/win-unpacked/resources/THIRD_PARTY_NOTICES.md',
+            'apps/desktop/release/win-unpacked/resources/worker/index.js',
+            $ffmpeg,
+            'apps/desktop/release/win-unpacked/resources/worker/ffmpeg/ffmpeg-static-LICENSE',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/package.json',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/dist/index.js',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/core/package.json',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/core/dist/index.js',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/openai-realtime/package.json',
+            'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/openai-realtime/dist/index.js'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              throw "Required Windows package resource is missing: $path"
+            }
+          }
+          & $ffmpeg -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Bundled FFmpeg failed to execute with exit code $LASTEXITCODE"
+          }
+      - name: Upload Windows installer smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: roomate-voice-windows-installer-smoke
+          path: apps/desktop/release/rmv_Setup_version*.exe
+          if-no-files-found: error
+          retention-days: 7
