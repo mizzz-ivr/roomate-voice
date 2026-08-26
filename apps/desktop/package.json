@@ -87,7 +87,7 @@
           ]
         }
       ],
-      "artifactName": "RooMate Voice Setup ${version}.${ext}"
+      "artifactName": "rmv_Setup_version${version}.${ext}"
     },
     "nsis": {
       "oneClick": true,
