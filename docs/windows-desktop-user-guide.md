@@ -45,29 +45,76 @@ GitHub Releasesを開き、最新のPreview ReleaseからWindows installerを取
 
 ## 4. Discord Botを準備する
 
-Discord Developer PortalでRooMate Voice用Application / Botを準備します。
+Discord Developer PortalでRooMate Voice用Applicationを作成し、利用するDiscordサーバーへBotを追加します。
 
-必要な情報:
+Discord公式参考:
+
+- [Building your first Discord Bot](https://docs.discord.com/developers/quick-start/getting-started)
+- [Server IDの確認方法](https://support.discord.com/hc/ja/articles/206346498-%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC-%E3%82%B5%E3%83%BC%E3%83%90%E3%83%BC-%E3%83%A1%E3%83%83%E3%82%BB%E3%83%BC%E3%82%B8ID%E3%81%AF%E3%81%A9%E3%81%93%E3%81%A7%E8%A6%8B%E3%81%A4%E3%81%91%E3%82%89%E3%82%8C%E3%82%8B)
+
+### 4.1 Applicationを作成する
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) を開きます。
+2. `New Application` を選び、RooMate Voice用のApplicationを作成します。
+3. `General Information` を開きます。
+4. `Application ID` をコピーし、PC上だけで保管します。
+
+Application IDはSecretではありませんが、RooMate Voiceの設定以外へ不要に公開する必要はありません。
+
+### 4.2 Bot Tokenを取得する
+
+1. Developer Portal左側の `Bot` を開きます。
+2. Token欄からBot Tokenを発行します。表示されない場合はDiscordの案内に従ってTokenをReset / regenerateします。
+3. Tokenを安全な場所へ保存します。
+
+> [!CAUTION]
+> Bot TokenはSecretです。このガイド、GitHub、Notion、Chat、Discordメッセージへ貼らないでください。漏えいした場合はDeveloper PortalでTokenを再発行してください。
+
+### 4.3 Guild Installを設定する
+
+Developer Portalの `Installation` を開きます。
+
+1. `Installation Contexts` で **Guild Install** を利用できる状態にします。
+2. Install LinkはDiscord標準の `Discord Provided Link` を利用します。
+3. `Default Install Settings` のGuild Installへ次のscopeを設定します。
+   - `applications.commands`
+   - `bot`
+4. Bot permissionsへ少なくとも次を設定します。
+   - View Channels
+   - Connect
+   - Speak
+   - Use Application Commands
+5. 変更を保存します。
+
+RooMate Voiceが利用するGateway Intentは `Guilds` / `GuildVoiceStates` です。初期構成で特権Intentの有効化は前提にしていません。
+
+### 4.4 BotをDiscordサーバーへ追加する
+
+1. `Installation` ページのInstall Linkをコピーします。
+2. ブラウザでInstall Linkを開きます。
+3. `Add to server` を選びます。
+4. RooMate Voiceを使うDiscordサーバーを選択します。
+5. 表示される権限を確認して追加を完了します。
+6. Discordのメンバー一覧にBotが表示されることを確認します。
+
+Botを追加するには、そのDiscordサーバーでアプリ追加に必要な権限を持つアカウントを使用してください。
+
+### 4.5 Guild IDを取得する
+
+Discord Desktopで:
+
+1. 左下の歯車から `ユーザー設定` を開きます。
+2. `詳細設定` → `開発者モード` をONにします。
+3. RooMate Voiceを使うサーバーのアイコンを右クリックします。
+4. `サーバーIDをコピー` を選びます。
+
+この値がRooMate Voiceで入力するGuild IDです。
+
+ここまでで、Initial Setupに必要な次の3項目が揃います。
 
 - Application ID
+- Guild ID
 - Bot Token
-- 利用するGuild ID
-
-Botに必要な主な権限:
-
-- View Channels
-- Connect
-- Speak
-- Use Application Commands
-
-利用するscope:
-
-- `bot`
-- `applications.commands`
-
-RooMate Voiceは `Guilds` と `GuildVoiceStates` を利用します。
-
-Bot TokenそのものをGitHubやChatへ貼らないでください。
 
 ## 5. Initial Setup
 
@@ -114,6 +161,9 @@ SecretはElectron main process側でWindows保護ストレージを利用して�
 - Diagnostics foundation
 
 Health pollingにより、Bot / Discord / Voice sessionの状態を画面へ反映します。
+
+> [!WARNING]
+> `v0.1.0` Previewには既知のIssue #10があります。Bot Stop / Restartと`/health`取得が重なった場合、停止前の古いDiscord / Voice session状態が画面へ戻る可能性があります。Stop / Restart直後の表示が実際の状態と食い違う場合は、その表示だけを最終判定に使わず、RooMate Voiceを一度完全終了して起動し直して状態を確認してください。Stable化前に修正対象です。
 
 > [!NOTE]
 > GUI connection test、diagnostics export、task trayは後続実装です。現在のPreviewでは「実装済み」とは扱いません。
@@ -204,6 +254,7 @@ Windowsの「インストールされているアプリ」から `RooMate Voice`
 - Clean WindowsでSetup.exeだけを使ったinstall E2E
 - GUIだけでの初期設定から実VCまでの通し確認
 - barge-inの実機再現性確認
+- Issue #10 stale health response race修正
 - uninstall後のデータ確認
 - code signing / SmartScreen対策
 - auto update
