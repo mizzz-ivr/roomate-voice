@@ -116,7 +116,39 @@ Discord Desktopで:
 - Guild ID
 - Bot Token
 
-## 5. Initial Setup
+## 5. OpenAI API Keyを準備する
+
+RooMate VoiceはChatGPTのログイン情報ではなく、**OpenAI API PlatformのAPI Key**を使用します。APIを利用できるOpenAI PlatformのProjectを用意してください。
+
+OpenAI公式参考:
+
+- [OpenAI API キーはどこで確認できますか？](https://help.openai.com/ja-jp/articles/4936850-where-do-i-find-my-openai-api-key)
+- [API プラットフォームでのプロジェクト管理](https://help.openai.com/ja-jp/articles/9186755)
+
+### 5.1 ProjectとAPI利用状態を確認する
+
+1. [OpenAI Platform](https://platform.openai.com/) にサインインします。
+2. RooMate Voiceで使用するProjectを選択します。専用Projectを分けても構いません。
+3. APIを利用できる支払い・利用設定になっていることを確認します。
+4. ProjectにModel Usage制限を設定している場合は、RooMate Voiceが使用するRealtime modelを利用できる設定か確認します。
+
+RooMate Voice `v0.1.0` の標準Realtime modelは `gpt-realtime-2.1-mini`、入力文字起こしは `gpt-transcribe` です。
+
+### 5.2 Secret keyを作成する
+
+1. OpenAI Platformで対象Projectの `API Keys` を開きます。
+2. `Create new secret key` を選びます。
+3. RooMate Voice用と分かる名前でSecret keyを作成します。
+4. 作成時に表示されたSecret keyを、RooMate Voiceを実行するPC上で安全に保管します。
+
+OpenAIではSecret key全文を確認できるのは作成時だけです。紛失した場合は古いkeyを使い回そうとせず、新しいkeyを作成してください。
+
+> [!CAUTION]
+> OpenAI API KeyはSecretです。GitHub、Notion、Chat、Discord、Issue、PR、スクリーンショットへ貼らないでください。RooMate Voice DesktopのInitial Setupへローカルで入力してください。
+
+API Key権限をRestrictedにしている場合は、RooMate Voiceが使用するAPIリクエストを許可できる設定が必要です。接続できない場合はProjectのAPI Key権限とModel Usageを確認してください。
+
+## 6. Initial Setup
 
 RooMate Voiceを起動し、GUIのInitial Setupから設定します。
 
@@ -148,7 +180,7 @@ RooMate Voiceを起動し、GUIのInitial Setupから設定します。
 
 SecretはElectron main process側でWindows保護ストレージを利用して保存します。保存済みSecretの平文をrendererへ再表示しない設計です。
 
-## 6. Botを起動する
+## 7. Botを起動する
 
 設定保存後、Home画面から `Bot Start` を実行します。
 
@@ -168,7 +200,7 @@ Health pollingにより、Bot / Discord / Voice sessionの状態を画面へ反�
 > [!NOTE]
 > GUI connection test、diagnostics export、task trayは後続実装です。現在のPreviewでは「実装済み」とは扱いません。
 
-## 7. Discord VCで使う
+## 8. Discord VCで使う
 
 1. RooMate Voice Botを起動します。
 2. Discordで利用するVoice Channelへ参加します。
@@ -214,7 +246,7 @@ AI発話中:
 ごめん、三つだけにして
 ```
 
-## 8. VCから退出する
+## 9. VCから退出する
 
 Discordで次を実行します。
 
@@ -224,7 +256,7 @@ Discordで次を実行します。
 
 BotがVoice Channelから退出します。
 
-## 9. Secretとプライバシー
+## 10. Secretとプライバシー
 
 RooMate Voiceでは以下を通常ログへ出さない方針です。
 
@@ -234,19 +266,19 @@ RooMate Voiceでは以下を通常ログへ出さない方針です。
 
 Wake word判定はローカル音響モデルではありません。Active Speakerの音声はWake word判定前にOpenAI Realtime APIへ送信されます。Wake word不一致時はAI応答を生成せず、その入力アイテムをRealtime会話履歴から削除します。
 
-## 10. アプリを終了する
+## 11. アプリを終了する
 
 通常のアプリ終了時にはVoice Workerも終了する設計です。
 
 RooMate Voiceはsingle-instance lockを持ち、2重起動時は既存ウィンドウを利用します。
 
-## 11. アンインストール
+## 12. アンインストール
 
 Windowsの「インストールされているアプリ」から `RooMate Voice` をアンインストールできます。
 
 現在のinstaller設定では、アンインストール時にapp dataを自動削除しません。保存済み設定・Secretの完全削除挙動はClean Windows acceptanceで確認対象です。
 
-## 12. Previewで未完了の確認
+## 13. Previewで未完了の確認
 
 `v0.1.0` は以下が未完了のためStableではありません。
 
@@ -262,7 +294,7 @@ Windowsの「インストールされているアプリ」から `RooMate Voice`
 - diagnostics export
 - task tray
 
-## 13. 不具合報告
+## 14. 不具合報告
 
 不具合を報告する場合はGitHub Issuesを利用してください。
 
