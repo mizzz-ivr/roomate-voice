@@ -49,12 +49,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view '${{ steps.meta.outputs.tag }}' --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = $LASTEXITCODE -eq 0
+
+          if ($releaseExists) {
             "publish=false" >> $env:GITHUB_OUTPUT
             Write-Host "Release ${{ steps.meta.outputs.tag }} already exists. Skipping publication."
           } else {
             "publish=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Release ${{ steps.meta.outputs.tag }} does not exist yet. Publication will continue."
           }
+
+          # `gh release view` returning 1 for a missing release is expected here. Explicitly reset the
+          # step result so the following build/release steps can use the `publish` output.
+          exit 0
 
       - name: Install dependencies
         if: steps.existing.outputs.publish == 'true'
