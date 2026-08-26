@@ -1,5 +1,7 @@
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +9,7 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDirectory, '..');
 const repositoryRoot = path.resolve(appRoot, '..', '..');
 const stageRoot = path.join(appRoot, 'worker-stage');
+const desktopRequire = createRequire(path.join(appRoot, 'package.json'));
 
 const internalPackages = [
   { name: 'config', source: path.join(repositoryRoot, 'packages', 'config') },
@@ -59,6 +62,27 @@ function installProductionDependencies() {
   });
 }
 
+async function stageFfmpeg() {
+  const ffmpegBinary = desktopRequire('ffmpeg-static');
+  if (typeof ffmpegBinary !== 'string' || !existsSync(ffmpegBinary)) {
+    throw new Error('ffmpeg-static did not provide a platform binary for this build.');
+  }
+
+  const ffmpegPackageRoot = path.dirname(desktopRequire.resolve('ffmpeg-static'));
+  const ffmpegDirectory = path.join(stageRoot, 'ffmpeg');
+  const executableName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+
+  await mkdir(ffmpegDirectory, { recursive: true });
+  await cp(ffmpegBinary, path.join(ffmpegDirectory, executableName));
+
+  for (const fileName of ['LICENSE', 'README.md']) {
+    const source = path.join(ffmpegPackageRoot, fileName);
+    if (existsSync(source)) {
+      await cp(source, path.join(ffmpegDirectory, `ffmpeg-static-${fileName}`));
+    }
+  }
+}
+
 await rm(stageRoot, { recursive: true, force: true });
 await mkdir(stageRoot, { recursive: true });
 
@@ -95,5 +119,7 @@ for (const { name, source } of internalPackages) {
   await cp(path.join(source, 'dist'), path.join(destination, 'dist'), { recursive: true });
   await cp(path.join(source, 'package.json'), path.join(destination, 'package.json'));
 }
+
+await stageFfmpeg();
 
 console.log(`Packaged Voice Worker staged at ${stageRoot}`);
