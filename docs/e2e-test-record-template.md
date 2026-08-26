@@ -1,24 +1,26 @@
-# RooMate Voice ローカルE2Eテスト結果
+# RooMate Voice Windows実機E2Eテスト結果
 
-> このファイルへToken、API Key、秘密情報を記載しないでください。GitHubへ共有する前にGuild ID、User ID、ローカルパス、IPアドレスを確認・マスクしてください。
+> [!IMPORTANT]
+> Token、API Key、`.env`、Transcription本文をこのファイルへ記載しないでください。GitHubへ共有する前にGuild ID、User ID、ローカルパス、IPアドレス等も必要に応じてマスクしてください。
 
 ## 1. 基本情報
 
 | 項目 | 値 |
 |---|---|
 | テスト実施日 | YYYY-MM-DD |
-| 実施者 |  |
 | Repository | `mizzz-ivr/roomate-voice` |
-| Branch | `feature/local-realtime-foundation` |
+| Branch | `main` |
 | Commit SHA |  |
-| 起動方式 | Node.js / Docker Compose |
+| Release | `v0.1.0 Preview` / N/A |
+| 起動方式 | Node.js / Docker Compose / Windows Desktop |
 | テスト時間 |  分 |
 
-## 2. 環境
+## 2. Windows環境
 
 | 項目 | 値 |
 |---|---|
 | Windows version |  |
+| PowerShell |  |
 | CPU |  |
 | Memory |  |
 | Node.js |  |
@@ -29,15 +31,23 @@
 | Discord client |  |
 | ネットワーク | 有線 / Wi-Fi |
 
-確認コマンド:
+開発者向け確認コマンド:
 
 ```powershell
+$PSVersionTable.PSVersion
+git --version
 node --version
 npm --version
 ffmpeg -version
+git rev-parse HEAD
+```
+
+Docker phaseのみ:
+
+```powershell
 docker version
 docker compose version
-git rev-parse HEAD
+wsl --status
 ```
 
 ## 3. 音声環境
@@ -49,89 +59,99 @@ git rev-parse HEAD
 | Discord入力モード | 音声検出 / Push to Talk |
 | Discordノイズ抑制 |  |
 | Discord自動入力感度 | ON / OFF |
-| GoXLR等の音声機器 |  |
+| オーディオインターフェース |  |
 | マイク |  |
 
 ## 4. RooMate Voice設定
 
-秘密情報は記載しません。
+Secretは記載しません。
 
-| 環境変数 | 値 |
+| 設定 | 値 |
 |---|---|
-| `OPENAI_REALTIME_MODEL` |  |
-| `OPENAI_VOICE` |  |
-| `BOT_PERSONA_NAME` |  |
-| `BOT_PERSONA_STYLE` |  |
-| `BOT_WAKE_WORD` |  |
-| `BOT_SILENCE_MS` |  |
-| `LOG_LEVEL` |  |
+| Realtime model | `gpt-realtime-2.1-mini` |
+| Transcription model | `gpt-transcribe` |
+| Voice |  |
+| Persona name |  |
+| Wake word | `ルーメイト` |
+| Wake word aliases | `ルームメイト` |
+| Silence duration |  |
+| Log level |  |
 
 ## 5. 事前確認
 
+### Node.js直接E2E
+
+- [ ] 最新`main`へ同期
 - [ ] `.env`がGit管理対象外
 - [ ] `npm install`成功
 - [ ] `npm run check`成功
-- [ ] Discord Botがテストサーバーへインストール済み
-- [ ] BotにView Channels権限がある
-- [ ] BotにConnect権限がある
-- [ ] BotにSpeak権限がある
-- [ ] OpenAI Project API Keyを使用
+- [ ] Discord BotがテストGuildへ追加済み
+- [ ] View Channels / Connect / Speak / Use Application Commands権限あり
 - [ ] OpenAI APIが利用可能
 
-## 6. Node.js直接起動
+### Windows Desktop acceptance
 
-### 起動
+- [ ] GitHub Releaseから対象Setup.exeを取得
+- [ ] PowerShell / Git / Node.js / npm / FFmpeg PATH / Docker / WSL / `.env`を一般ユーザー操作として要求していない
 
-- [ ] `npm run dev`成功
-- [ ] `Discord client ready`を確認
-- [ ] Dashboard表示成功
+## 6. Bot起動・Health
+
+- [ ] Bot起動成功
+- [ ] `Discord client ready`
 - [ ] Health API応答成功
+- [ ] `status=ok`
+- [ ] `discordReady=true`
+- [ ] VC参加前 `activeVoiceSessions=0`
 
-Health応答:
+## 7. Slash Commands / VC接続
 
-```json
-{
-  "status": "",
-  "discordReady": false,
-  "activeVoiceSessions": 0,
-  "model": "",
-  "uptimeSeconds": 0,
-  "version": ""
-}
-```
-
-### Slash Commands
-
-- [ ] `/status`表示
-- [ ] `/join`表示
-- [ ] `/leave`表示
-- [ ] `/status`実行成功
-
-### VC接続
-
+- [ ] `/status`成功
 - [ ] `/join`成功
 - [ ] Botが同じVCへ参加
-- [ ] Healthの`activeVoiceSessions`が1
-- [ ] `Voice session started`を確認
+- [ ] `activeVoiceSessions=1`
+- [ ] `Voice session started`
 
-### 音声往復
+## 8. Wake word gate
 
-| No. | 発話内容 | 入力成功 | 出力成功 | 応答開始秒 | 音切れ | 備考 |
-|---:|---|---|---|---:|---|---|
-| 1 | こんにちは。今日一緒にゲームするなら何がおすすめ？ |  |  |  |  |  |
-| 2 | マインクラフトで最初に作る設備を三つだけ教えて。 |  |  |  |  |  |
-| 3 | RTX 3070 Tiって今でもWQHDで使える？ |  |  |  |  |  |
-| 4 | 任意 |  |  |  |  |  |
-| 5 | 任意 |  |  |  |  |  |
+| No. | 発話 | 期待 | 結果 | 備考 |
+|---:|---|---|---|---|
+| 1 | `今日マイクラやる？` | 応答しない |  |  |
+| 2 | `ルーメイト、聞こえる？` | 応答する |  |  |
+| 3 | `ルームメイト、ネザーについて教えて` | Aliasで応答する |  |  |
+| 4 | `今日は何時からやる？` | 応答しない |  | 履歴汚染確認用 |
+| 5 | `ルーメイト、ダイヤはどの高さで掘る？` | 直前の非Wake内容へ反応せず応答 |  |  |
 
-成功数: ` / 5`
+- [ ] 非Wake committed itemがRealtime会話履歴へ残らない
+- [ ] 通常ログへTranscription本文が出ない
 
-平均体感応答開始時間: ` 秒`
+## 9. Back-to-back / ordering race
 
-### 割り込み
+Wakeなし→Wake、Wake→Wakeを複数回、先行Transcription結果を待たず連続して発話します。
 
-| No. | AI停止成功 | 停止までの秒数 | 新しい発話へ応答 | 備考 |
-|---:|---|---:|---|---|
+- [ ] 次の発話を取りこぼさない
+- [ ] 古いcleanupが新しいcapture leaseを外さない
+- [ ] committed itemとTranscriptionが別発話へ誤相関しない
+- [ ] Transcription完了順が逆でも判定はcommit順
+- [ ] 後続capture中に先行Responseを開始しない
+- [ ] back-to-back Wakeで重複Responseを生成しない
+- [ ] Wake coalescingが成立する
+
+## 10. Barge-in
+
+最初に:
+
+```text
+ルーメイト、工業MODを始める手順を五つ教えて
+```
+
+AI発話中:
+
+```text
+ごめん、三つだけにして
+```
+
+| No. | AI停止成功 | Wakeなし再応答 | 音切れ/重複 | 備考 |
+|---:|---|---|---|---|
 | 1 |  |  |  |  |
 | 2 |  |  |  |  |
 | 3 |  |  |  |  |
@@ -140,120 +160,101 @@ Health応答:
 
 割り込み成功数: ` / 5`
 
-### 終了
+目標: **5回中4回以上**。
+
+## 11. Failure safety
+
+実際に発生した場合、SecretやTranscription本文を含まないメタデータだけで記録します。
+
+- [ ] pipeline failure時にpartial input bufferをclearする
+- [ ] clear ACK前にcapture holdを解放しない
+- [ ] clear成功は`input_audio_buffer.cleared` ACK後だけ
+- [ ] clear rejectをclient event IDで相関する
+- [ ] clear ACK timeout時はvoice sessionをfail-closeする
+- [ ] commit errorをclient event IDで相関する
+- [ ] Commit ACK timeout時はRealtime sessionをfail-closeする
+- [ ] Transcription failure時にcommitted item cleanupを試行する
+- [ ] Realtime切断時にDiscord voice sessionも終了する
+
+## 12. 終了
 
 - [ ] `/leave`成功
 - [ ] BotがVCから退出
-- [ ] Healthの`activeVoiceSessions`が0
-- [ ] `Voice session stopped`を確認
-- [ ] `Ctrl + C`で正常終了
+- [ ] `activeVoiceSessions=0`
+- [ ] `Voice session stopped`
 
-## 7. Docker Compose
+## 13. Docker Compose
 
-- [ ] Docker Desktop起動
+Node.js直接E2E成功後のみ実施します。
+
+- [ ] Docker Desktop / WSL 2 ready
 - [ ] `docker compose config`成功
 - [ ] `docker compose up --build`成功
-- [ ] Bot container healthy/起動
-- [ ] Dashboard container起動
-- [ ] Dashboard `http://localhost:8080`表示
-- [ ] Health `http://localhost:3001/health`応答
-- [ ] `/join`成功
-- [ ] 音声入力成功
-- [ ] AI音声出力成功
-- [ ] 割り込み成功
+- [ ] Wake word / Alias / no-wake成功
+- [ ] history cleanup成功
+- [ ] ordering race成功
+- [ ] barge-in成功
 - [ ] `/leave`成功
 - [ ] `docker compose down`成功
 
-## 8. リソース使用量
+## 14. Windows Desktop / Setup.exe Acceptance
 
-測定タイミング: VC接続後、10分間会話した時点
+| 項目 | 結果 | 備考 |
+|---|---|---|
+| Setup.exeのみでinstall |  |  |
+| Start Menu / Desktop shortcut |  |  |
+| Initial Setup |  |  |
+| Discord設定GUI入力 |  |  |
+| OpenAI API Key GUI入力 |  |  |
+| Secret保存 |  |  |
+| 再起動後Secretを保存済みとして扱う |  |  |
+| Secret平文をrendererへ再表示しない |  |  |
+| Bot Start |  |  |
+| Bot Stop |  |  |
+| Bot Restart |  |  |
+| bundled Worker |  |  |
+| bundled FFmpeg |  |  |
+| 外部FFmpeg PATH不要 |  |  |
+| Discord実VC |  |  |
+| Wake / Alias / no-wake |  |  |
+| barge-in |  |  |
+| 2重起動防止 |  |  |
+| app終了時Worker終了 |  |  |
+| settings復元 |  |  |
+| uninstall |  |  |
+| Secret / transcription漏えいなし |  |  |
 
-| 項目 | アイドル | 会話中ピーク | 10分後 |
-|---|---:|---:|---:|
-| Bot CPU |  |  |  |
-| Bot Memory |  |  |  |
-| Dashboard CPU |  |  |  |
-| Dashboard Memory |  |  |  |
-
-Dockerの場合:
-
-```powershell
-docker stats --no-stream
-```
-
-## 9. OpenAI利用量
-
-| 項目 | 値 |
-|---|---:|
-| テスト前Project利用量 |  |
-| テスト後Project利用量 |  |
-| 差分 |  |
-| 会話時間 |  分 |
-| 推定1時間換算 |  |
-
-## 10. エラー・警告
-
-### Botログ
-
-```text
-秘密情報を除いたログを貼る
-```
-
-### OpenAI Realtimeエラー
-
-```text
-なし / エラー内容
-```
-
-### Discord Voiceエラー
-
-```text
-なし / エラー内容
-```
-
-### FFmpegエラー
-
-```text
-なし / エラー内容
-```
-
-## 11. 不具合一覧
+## 15. 不具合一覧
 
 | ID | 重要度 | 現象 | 再現手順 | 期待値 | 実際 | 再現率 |
 |---|---|---|---|---|---|---:|
 | E2E-01 | High / Medium / Low |  |  |  |  |  |
 
-## 12. 合格判定
+## 16. 合格判定
 
 ### 必須
 
 - [ ] Botログイン
-- [ ] Slash Commands
-- [ ] VC参加
-- [ ] 音声入力
-- [ ] 音声出力
-- [ ] VC退出
-- [ ] Docker起動
-- [ ] 秘密情報漏えいなし
+- [ ] `/status` / `/join` / `/leave`
+- [ ] Wake wordなしで無応答
+- [ ] Primary Wake wordで応答
+- [ ] Aliasで応答
+- [ ] 非Wake履歴汚染なし
+- [ ] ordering raceで誤相関なし
+- [ ] barge-in 5回中4回以上
+- [ ] Realtime切断時fail-close
+- [ ] Secret漏えいなし
+- [ ] Transcription本文漏えいなし
 
-### 品質目標
+最終判定: `Pass / Conditional Pass / Fail / Blocked`
 
-- [ ] 音声往復5回中4回以上成功
-- [ ] 割り込み5回中4回以上成功
-- [ ] 10分間異常終了なし
-- [ ] 重複再生なし
-- [ ] 致命的な音切れなし
+## 17. 次アクション
 
-最終判定: `合格 / 条件付き合格 / 不合格`
-
-## 13. 次アクション
-
-- [ ] Issue #2へ結果をコメント
-- [ ] 不具合Issueを作成
-- [ ] PR #1へ修正
-- [ ] CI再確認
-- [ ] PR #1マージ
-- [ ] Lightsailステージングへ進む
+- [ ] Issue #2へDeveloper Real VC E2E結果を反映
+- [ ] Issue #6へDesktop acceptance結果を反映
+- [ ] Failは重複Issueを確認後に不具合Issue化
+- [ ] 必要なfixをbranch → test → PR → CI → reviewで対応
+- [ ] Clean Windows acceptance完了後にStable化可否を判断
 
 コメント:
 

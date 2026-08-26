@@ -1,59 +1,132 @@
 # RooMate Voice
 
-Discordのボイスチャンネルへ参加し、OpenAI Realtime APIを使って自然に音声会話するOSS Discord Botです。
+Discordのボイスチャンネルへ参加し、OpenAI Realtime APIを使って自然に音声会話するOSS音声AI Botです。
 
-現在は`gpt-realtime-2.1-mini`を標準モデルとし、会話Providerを分離しています。将来GPT-Live APIが利用可能になった場合も、性能・遅延・料金を比較してProvider単位で切り替えられる設計を目指します。
+## Windows Desktop Preview
 
-## 現在の実装範囲
+非エンジニア向けWindows Desktop Appを **v0.1.0 Preview** として公開しています。
+
+- Release: [RooMate Voice v0.1.0 (Preview)](https://github.com/mizzz-ivr/roomate-voice/releases/tag/v0.1.0)
+- Installer: `rmv_Setup_version0.1.0.exe`
+- 対象: Windows x64
+- 導入・使い方: [Windows Desktop 利用ガイド](docs/windows-desktop-user-guide.md)
+- ドキュメント一覧: [docs/README.md](docs/README.md)
+
+一般ユーザーは次を手動導入する必要はありません。
+
+- PowerShell / CMD操作
+- Git
+- Node.js / npm
+- FFmpeg / PATH設定
+- Docker Desktop / WSL
+- `.env`編集
+
+> [!WARNING]
+> `v0.1.0` は **Preview / Pre-release** です。Setup.exe、GUI、packaged Voice Worker、bundled FFmpegは実装・CI検証済みですが、Windows実機Discord/OpenAI VC E2EとClean Windows installer acceptanceはまだ完了していません。Stable版としての利用保証はまだ行いません。
+
+> [!IMPORTANT]
+> Discord Bot Token / OpenAI API KeyなどのSecretをGitHub Issue、PR、Notion、Chatへ貼らないでください。Desktop版ではSecretをWindows保護ストレージへ保存し、保存済みSecretの平文をrendererへ再表示しない設計です。
+
+## 主な機能
+
+### Voice Worker
 
 - Discord slash commands: `/join`、`/leave`、`/status`
 - Discord Voice Receiverからユーザー音声を取得
-- Opus 48kHz stereoからPCM16 24kHz monoへ変換
-- OpenAI Realtime APIへWebSocket接続
+- Opus 48kHz stereo → PCM16 24kHz mono変換
+- OpenAI Realtime API WebSocket接続
 - `gpt-transcribe`による入力文字起こし
 - Wake word / Alias一致時だけAI応答を生成
 - Wake word不一致の入力アイテムをRealtime会話履歴から削除
-- Realtime音声出力をDiscord用48kHz stereoへ変換して再生
-- ユーザー発話によるAI音声の割り込み停止
-- キャラクター名・性格・口調・呼びかけ語のInstructions生成
-- Bot health endpoint
-- React/Vite管理ダッシュボード
-- ローカルNode.js実行・Docker Compose
-- AWS Lightsail向け常駐Compose/Systemd
-- GitHub Actionsによるテスト・ビルド・GHCR公開
+- Realtime音声 → Discord 48kHz stereo再生
+- AI発話中のbarge-in
+- Persona / Voice / Wake word設定
+- ordered input decisions / capture lease / Wake coalescing
+- commit / clear ACK相関とfail-close
+- Realtime切断時のDiscord voice session終了
+- Transcription本文を通常ログへ保存しない
 
-> [!IMPORTANT]
-> Discord/OpenAIの実資格情報を用いたEnd-to-End音声疎通は、利用者のローカル環境で実施してください。API課金が発生するためCIでは実行しません。
+標準設定:
+
+- Realtime model: `gpt-realtime-2.1-mini`
+- Transcription model: `gpt-transcribe`
+- Wake word: `ルーメイト`
+- Alias: `ルームメイト`
+
+### Windows Desktop App
+
+- Electron 44 + React + Vite
+- NSIS Windows x64 installer
+- Initial Setup / Home / RooMate Settings / Diagnostics foundation
+- Bot Start / Stop / Restart
+- Voice Worker lifecycle管理
+- single-instance lock
+- Electron `safeStorage`によるSecret保存
+- Secret redaction
+- Health polling / HTTP 503 degraded health反映
+- packaged Voice Worker
+- bundled FFmpeg
+- Start Menu / Desktop shortcut
+
+後続予定:
+
+- GUI connection test
+- diagnostics export
+- task tray
+- Windows login auto-start
+- Bot auto-start
+- code signing / SmartScreen対策
+- auto update
+- Stable Release
+
+## Discordでの基本的な使い方
+
+1. RooMate Voice BotをDiscordサーバーへ追加します。
+2. RooMate Voice DesktopでDiscord / OpenAI / RooMate設定を保存します。
+3. `Bot Start`を実行します。
+4. DiscordでVoice Channelへ参加します。
+5. `/status`で状態を確認します。
+6. `/join`でBotをVCへ参加させます。
+7. `ルーメイト、聞こえる？` のようにWake wordを含めて話します。
+8. `/leave`で退出させます。
+
+Alias `ルームメイト` でも呼びかけできます。Wake wordなしの通常発話には原則応答しません。AI発話中のbarge-inではWake wordなしでも割り込み後の発話へ応答します。
+
+詳細は [Windows Desktop 利用ガイド](docs/windows-desktop-user-guide.md) を参照してください。
+
+## プライバシー上の注意
 
 > [!WARNING]
-> Wake word判定はローカル音響モデルではなく、OpenAI Realtimeの入力文字起こしを利用します。Active Speakerの音声は判定前にAPIへ送信されます。Wake word不一致時はAI応答を生成せず、その入力アイテムをRealtime会話履歴から削除します。
+> Wake word判定はローカル音響モデルではなく、OpenAI Realtimeの入力文字起こしを利用します。Active Speakerの音声はWake word判定前にOpenAI APIへ送信されます。Wake word不一致時はAI応答を生成せず、その入力アイテムをRealtime会話履歴から削除します。
 
-Windowsで初回テストを行う場合は、[WindowsローカルE2E音声テスト手順書](docs/windows-local-e2e-runbook.md)を使用してください。
-
-## 構成
+## Repository構成
 
 ```text
 roomate-voice/
 ├─ apps/
 │  ├─ bot/                 # Discord常駐Bot・音声処理・Health API
-│  └─ dashboard/           # Vite/React管理画面（Vercel対応）
+│  ├─ dashboard/           # Vite/React管理Dashboard
+│  └─ desktop/             # Electron Windows Desktop App
 ├─ packages/
-│  ├─ config/              # 環境変数検証
+│  ├─ config/              # 設定検証
 │  ├─ core/                # Persona・Wake word・Provider境界
-│  └─ openai-realtime/     # OpenAI Realtime WebSocket adapter
+│  └─ openai-realtime/     # OpenAI Realtime adapter
 ├─ infra/lightsail/        # Lightsail常駐用Compose/Systemd
-├─ docs/                   # 設計・ローカル開発・配置手順
-└─ .github/workflows/      # CI・Botコンテナ公開
+├─ docs/                   # User Guide / E2E / 設計 / 運用
+└─ .github/workflows/      # CI / Release / GHCR
 ```
 
-## ローカル起動
+## 開発者向けローカル起動
+
+Windows利用者向けSetup.exeとは別に、開発・E2EではNode.js直接起動とDocker Composeを利用できます。
 
 ### 必要環境
 
-- Node.js 22.12以上
-- npm 10以上
+- Node.js `>=22.12.0`
+- npm 10以上を目安
+- Git
 - FFmpeg
-- Discord Bot Token / Application ID
+- Discord Bot Token / Application ID / Guild ID
 - OpenAI API Key
 
 ### Node.js
@@ -61,7 +134,7 @@ roomate-voice/
 ```bash
 npm install
 cp .env.example .env
-# .envを設定
+# .envをローカルで設定
 npm run check
 npm run dev
 ```
@@ -85,6 +158,8 @@ docker compose up --build
 
 ## 環境変数
 
+開発版ではRepository直下の`.env`を使用できます。
+
 ```env
 DISCORD_BOT_TOKEN=
 DISCORD_CLIENT_ID=
@@ -102,64 +177,82 @@ BOT_SILENCE_MS=900
 VITE_BOT_HEALTH_URL=http://localhost:3001/health
 ```
 
-`BOT_WAKE_WORD_ALIASES`はカンマ区切りで複数指定できます。音声認識で揺れやすい別表記を登録してください。
-
-## Discordでの使い方
-
-1. BotをDiscordサーバーへ招待します。
-2. ユーザーがボイスチャンネルへ参加します。
-3. `/join`を実行します。
-4. `BOT_WAKE_WORD`またはAliasを含めてBotへ話しかけます。
-5. `/leave`で退出させます。
-
-Botに必要な権限は、View Channels、Connect、Speak、Use Application Commandsです。
+`BOT_WAKE_WORD_ALIASES`はカンマ区切りで複数指定できます。
 
 ## デプロイ方針
 
+### Windows Desktop
+
+一般ユーザー向け正式経路です。GitHub ReleasesからSetup.exeを配布します。
+
 ### Vercel
 
-`apps/dashboard`のビルド成果物だけを配置します。ルートの`vercel.json`からそのままデプロイできます。
+`apps/dashboard`のビルド成果物を配置します。
 
 ### AWS Lightsail
 
-Discord Gateway・Voice Gateway・UDP・OpenAI Realtime WebSocketを維持する常駐Botを配置します。`infra/lightsail`のComposeとSystemd Unitを使用します。
+Discord Gateway・Voice Gateway・UDP・OpenAI Realtime WebSocketを維持する常駐Botを配置します。
 
 ```text
-Vercel       → Dashboard
-Lightsail    → Bot Worker + FFmpeg
-OpenAI       → Realtime API
-Discord      → Voice Gateway / UDP
+Windows Desktop → Local Voice Worker + bundled FFmpeg
+Vercel          → Dashboard
+Lightsail       → Optional always-on Bot Worker
+OpenAI          → Realtime API
+Discord         → Voice Gateway / UDP
 ```
 
 ## 開発コマンド
 
 ```bash
-npm run dev            # BotとDashboardを並列起動
-npm run dev:bot        # Botのみ
-npm run dev:dashboard  # Dashboardのみ
+npm run dev
+npm run dev:bot
+npm run dev:dashboard
+npm run dev:desktop
 npm run typecheck
 npm run test
 npm run build
-npm run check          # typecheck + test + build
+npm run check
+npm run desktop:make:win
 ```
+
+`npm run check` は typecheck + unit test + production build を実行します。
+
+## 現在のリリース判定
+
+| 項目 | 状態 |
+|---|---|
+| Windows installer build | ✅ |
+| packaged Voice Worker | ✅ |
+| bundled FFmpeg | ✅ |
+| Windows CI | ✅ |
+| GitHub Preview Release | ✅ |
+| Windows実VC E2E | ⏳ |
+| Clean Windows installer E2E | ⏳ |
+| Stable Release | ⏳ |
 
 ## ロードマップ
 
 - [x] ローカルビルド基盤
 - [x] Discord VC参加・退出
-- [x] Realtime Provider基盤
+- [x] OpenAI Realtime Provider
 - [x] 音声入出力パイプライン
-- [x] Vercel向けDashboard
-- [x] Lightsail常駐構成
-- [x] Wake word判定（入力文字起こしベース）
-- [ ] ローカルWake word音響フィルター
+- [x] Wake word / Alias transcription gate
+- [x] production-readiness race / cleanup safety
+- [x] Windows Desktop foundation
+- [x] Voice Worker / FFmpeg bundle
+- [x] Setup.exe / Preview Release
+- [ ] Windows実VC E2E
+- [ ] Clean Windows acceptance
+- [ ] GUI connection test
+- [ ] diagnostics export
+- [ ] task tray
+- [ ] code signing / auto update
+- [ ] Stable Release
 - [ ] Guildごとの設定保存
 - [ ] Discord OAuth / Supabase
 - [ ] 利用量・費用集計
 - [ ] 音声Provider追加
-- [ ] 許諾済みカスタム音声管理
-- [ ] GPT-Live Provider
-- [ ] 複数同時VC・水平スケール
+- [ ] 複数VC・水平スケール
 
 ## 音声と権利
 
@@ -167,10 +260,22 @@ RooMate Voiceは、実在人物や既存キャラクターの無許諾な音声�
 
 ## ドキュメント
 
+### 利用ユーザー向け
+
+- [Windows Desktop 利用ガイド](docs/windows-desktop-user-guide.md)
+- [ドキュメント一覧](docs/README.md)
+
+### 開発・E2E
+
 - [WindowsローカルE2E音声テスト手順書](docs/windows-local-e2e-runbook.md)
+- [Voice Production Readiness E2E](docs/voice-production-readiness-e2e.md)
 - [E2Eテスト結果テンプレート](docs/e2e-test-record-template.md)
-- [アーキテクチャ](docs/architecture.md)
 - [ローカル開発](docs/local-development.md)
+
+### 設計・運用
+
+- [アーキテクチャ](docs/architecture.md)
+- [Windows Desktop App計画](docs/windows-desktop-app-plan.md)
 - [AWS Lightsailへの配置](docs/lightsail-deployment.md)
 - [コントリビューション](CONTRIBUTING.md)
 - [セキュリティ](SECURITY.md)
