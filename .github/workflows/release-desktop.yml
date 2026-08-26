@@ -68,9 +68,13 @@ jobs:
         if: steps.existing.outputs.publish == 'true'
         shell: pwsh
         run: |
+          $ffmpeg = 'apps/desktop/release/win-unpacked/resources/worker/ffmpeg/ffmpeg.exe'
           $required = @(
             '${{ steps.meta.outputs.installer }}',
+            'apps/desktop/release/win-unpacked/resources/THIRD_PARTY_NOTICES.md',
             'apps/desktop/release/win-unpacked/resources/worker/index.js',
+            $ffmpeg,
+            'apps/desktop/release/win-unpacked/resources/worker/ffmpeg/ffmpeg-static-LICENSE',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/config/dist/index.js',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/core/dist/index.js',
             'apps/desktop/release/win-unpacked/resources/worker/node_modules/@roomate-voice/openai-realtime/dist/index.js'
@@ -79,6 +83,10 @@ jobs:
             if (-not (Test-Path $path)) {
               throw "Required release resource is missing: $path"
             }
+          }
+          & $ffmpeg -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Bundled FFmpeg failed to execute with exit code $LASTEXITCODE"
           }
 
       - name: Create GitHub pre-release
